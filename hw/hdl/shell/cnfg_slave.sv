@@ -1213,7 +1213,7 @@ assign host_req.data.req_2.rsrvd        = 0;
 assign host_req.valid = local_post || remote_post;
 
 // Command queues
-axis_data_fifo_req_256_used inst_cmd_queue (
+axis_data_fifo_req_384_used inst_cmd_queue (
   .s_axis_aresetn(aresetn),
   .s_axis_aclk(aclk),
   .s_axis_tvalid(host_req.valid),

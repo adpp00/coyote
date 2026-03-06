@@ -329,6 +329,9 @@ package lynxTypes;
     localparam integer ECI_ID_BITS = 5;
     localparam integer ECI_WORD_BITS = 64;
 
+    // NVME specific
+    localparam integer NVME_DEV_BITS = 4;
+
     // ========================---------------------------------------------
     // Dynamic
     // ========================---------------------------------------------
@@ -419,7 +422,13 @@ package lynxTypes;
         logic host; // rsrvd
         logic [OFFS_BITS-1:0] offs; // rsrvd
 
-        logic [128-OFFS_BITS-2-VADDR_BITS-LEN_BITS-1-2*DEST_BITS-PID_BITS-3-STRM_BITS-OPCODE_BITS-1:0] rsrvd;
+
+        // nvme-specific
+        logic [VADDR_BITS-1:0] naddr;
+        logic [NVME_DEV_BITS-1:0] dev_id;
+        logic write;
+
+        logic [192-OFFS_BITS-2-VADDR_BITS-LEN_BITS-1-2*DEST_BITS-PID_BITS-3-STRM_BITS-OPCODE_BITS-VADDR_BITS-NVME_DEV_BITS-1-1:0] rsrvd;
     } req_t;
 
     typedef struct packed {
