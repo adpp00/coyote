@@ -372,7 +372,14 @@ module shell_top (
     AXI4L axi_cnfg ();
     AXI4L axi_ctrl [N_REGIONS] ();
     AXI4 #(.AXI4_DATA_BITS(AVX_DATA_BITS)) axim_ctrl [N_REGIONS] ();
-    
+{% if cnfg.en_nvme %}
+    AXI4L axi_nvme_cnfg ();
+    AXI4 axi_nvme_prp ();
+    AXI4 axi_nvme_sq ();
+    AXI4 axi_nvme_cq ();
+    AXI4 axi_direct ();
+{% endif %}
+
     shell_ctrl_cc inst_shell_ctrl_cc (
         .xclk(xclk),
         .xresetn(xresetn),
@@ -384,11 +391,18 @@ module shell_top (
         .nresetn(nresetn),
         .lckresetn(lckresetn),
         .sys_reset(1'b0),
-        
+
         .axi_main(s_axi_main),
         .axi_cnfg(axi_cnfg),
         .axi_ctrl(axi_ctrl),
-        .axim_ctrl(axim_ctrl) 
+{% if cnfg.en_nvme %}
+        .axi_nvme_cnfg(axi_nvme_cnfg),
+        .axi_nvme_prp(axi_nvme_prp),
+        .axi_nvme_sq(axi_nvme_sq),
+        .axi_nvme_cq(axi_nvme_cq),
+        .axi_direct(axi_direct),
+{% endif %}
+        .axim_ctrl(axim_ctrl)
     );
 
 {% if cnfg.fdev == 'u55c' %}
@@ -821,6 +835,9 @@ module shell_top (
 {% elif cnfg.en_rdma %}
     axi_stripe (.aclk(aclk), .aresetn(aresetn), .s_axi(axi_ddr_rdma), .m_axi(axi_ddr_in[0]));
 
+{% endif %}
+{% if cnfg.en_nvme %}
+    axi_stripe (.aclk(aclk), .aresetn(aresetn), .s_axi(axi_direct), .m_axi(axi_ddr_in[N_MEM_CHAN-1]));
 {% endif %}
 {% if cnfg.en_dcard %}
     // ================-----------------------------------------------------------------
@@ -1314,6 +1331,12 @@ module shell_top (
         .s_tcp_tx_stat(tcp_tx_stat),
         .s_axis_tcp(axis_tcp_rx),
         .m_axis_tcp(axis_tcp_tx),
+{% endif %}
+{% if cnfg.en_nvme %}
+        .s_axi_nvme_cnfg(axi_nvme_cnfg),
+        .s_axi_nvme_prp(axi_nvme_prp),
+        .s_axi_nvme_sq(axi_nvme_sq),
+        .s_axi_nvme_cq(axi_nvme_cq),
 {% endif %}
 {% if cnfg.en_wb %}
         .m_wback(wback),

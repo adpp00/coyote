@@ -49,6 +49,12 @@ module mmu_region_top #(
 	metaIntf.s 						    s_bpss_rd_sq,
 	metaIntf.s						    s_bpss_wr_sq,
 
+`ifdef EN_NVME
+    // NVMe TLB (single rd only)
+    metaIntf.s                          s_nvme_rd_sq,
+    metaIntf.m                          m_nvme_rd_rsp,
+`endif
+
 `ifdef EN_STRM
 	// Stream DMAs
     dmaIntf.m                           m_rd_HDMA,
@@ -101,14 +107,18 @@ localparam integer PHY_L_BITS = PADDR_BITS - PG_L_BITS;
 localparam integer PHY_S_BITS = PADDR_BITS - PG_S_BITS;
 localparam integer TAG_L_BITS = VADDR_BITS - HASH_L_BITS - PG_L_BITS;
 localparam integer TAG_S_BITS = VADDR_BITS - HASH_S_BITS - PG_S_BITS;
-localparam integer TLB_L_DATA_BITS = TAG_L_BITS + PID_BITS + 2 + PHY_L_BITS + HPID_BITS;
-localparam integer TLB_S_DATA_BITS = TAG_S_BITS + PID_BITS + 2 + PHY_S_BITS + HPID_BITS;
+localparam integer TLB_L_DATA_BITS = TAG_L_BITS + PID_BITS + STRM_BITS + PHY_L_BITS + HPID_BITS;
+localparam integer TLB_S_DATA_BITS = TAG_S_BITS + PID_BITS + STRM_BITS + PHY_S_BITS + HPID_BITS;
 
 // Tlb interfaces
 tlbIntf #(.TLB_INTF_DATA_BITS(TLB_L_DATA_BITS)) rd_lTlb ();
 tlbIntf #(.TLB_INTF_DATA_BITS(TLB_S_DATA_BITS)) rd_sTlb ();
 tlbIntf #(.TLB_INTF_DATA_BITS(TLB_L_DATA_BITS)) wr_lTlb ();
 tlbIntf #(.TLB_INTF_DATA_BITS(TLB_S_DATA_BITS)) wr_sTlb ();
+`ifdef EN_NVME
+tlbIntf #(.TLB_INTF_DATA_BITS(TLB_L_DATA_BITS)) nvme_rd_lTlb ();
+tlbIntf #(.TLB_INTF_DATA_BITS(TLB_S_DATA_BITS)) nvme_rd_sTlb ();
+`endif
 tlbIntf #(.TLB_INTF_DATA_BITS(TLB_L_DATA_BITS)) lTlb ();
 tlbIntf #(.TLB_INTF_DATA_BITS(TLB_S_DATA_BITS)) sTlb ();
 
@@ -122,27 +132,40 @@ metaIntf #(.STYPE(req_t)) wr_req ();
 // ----------------------------------------------------------------------------------------
 // Mutex 
 // ----------------------------------------------------------------------------------------
-logic [1:0] mutex;
+logic [2:0] mutex;
 logic rd_lock, wr_lock;
 logic rd_unlock, wr_unlock;
 
+localparam logic [1:0] OWNER_BPSS_RD = 2'd0;
+localparam logic [1:0] OWNER_BPSS_WR = 2'd1;
+`ifdef EN_NVME
+localparam logic [1:0] OWNER_NVME_RD = 2'd2;
+logic nvme_rd_lock, nvme_rd_unlock;
+`endif
+
 always_ff @(posedge aclk) begin
-	if(aresetn == 1'b0) begin
-		mutex <= 2'b01;
-	end else begin
-		if(mutex[0] == 1'b1) begin // free
-			if(rd_lock)
-				mutex <= 2'b00;
-			else if(wr_lock)
-				mutex <= 2'b10;
-		end
-		else begin // locked
-			if((mutex[1] == 1'b0) && rd_unlock)
-				mutex <= 2'b01;
-			else if (wr_unlock)
-				mutex <= 2'b11;
-		end
-	end
+    if(!aresetn) begin
+        mutex <= {OWNER_BPSS_RD, 1'b1};
+    end
+    else begin
+        if(mutex[0]) begin // free
+            if(rd_lock)             mutex <= {OWNER_BPSS_RD, 1'b0};
+            else if(wr_lock)        mutex <= {OWNER_BPSS_WR, 1'b0};
+`ifdef EN_NVME
+            else if(nvme_rd_lock)   mutex <= {OWNER_NVME_RD, 1'b0};
+`endif
+        end
+        else begin // locked
+            case (mutex[2:1])
+                OWNER_BPSS_RD: if(rd_unlock)       mutex[0] <= 1'b1;
+                OWNER_BPSS_WR: if(wr_unlock)       mutex[0] <= 1'b1;
+`ifdef EN_NVME
+                OWNER_NVME_RD: if(nvme_rd_unlock)  mutex[0] <= 1'b1;
+`endif
+                default:                           mutex[0] <= 1'b1;
+            endcase
+        end
+    end
 end
 
 // ----------------------------------------------------------------------------------------
@@ -157,16 +180,53 @@ assign wr_lTlb.hit  = lTlb.hit;
 assign rd_sTlb.hit  = sTlb.hit;
 assign wr_sTlb.hit  = sTlb.hit;
 
-assign lTlb.addr  = mutex[1] ? wr_lTlb.addr : rd_lTlb.addr;
-assign sTlb.addr  = mutex[1] ? wr_sTlb.addr : rd_sTlb.addr;
-assign lTlb.pid   = mutex[1] ? wr_lTlb.pid : rd_lTlb.pid;
-assign sTlb.pid   = mutex[1] ? wr_sTlb.pid : rd_sTlb.pid;
-assign lTlb.strm  = mutex[1] ? wr_lTlb.strm : rd_lTlb.strm;
-assign sTlb.strm  = mutex[1] ? wr_sTlb.strm : rd_sTlb.strm;
-assign lTlb.wr    = mutex[1] ? wr_lTlb.wr : rd_lTlb.wr;
-assign sTlb.wr    = mutex[1] ? wr_sTlb.wr : rd_sTlb.wr;
-assign lTlb.valid = mutex[1] ? wr_lTlb.valid : rd_lTlb.valid;
-assign sTlb.valid = mutex[1] ? wr_sTlb.valid : rd_sTlb.valid;
+`ifdef EN_NVME
+assign nvme_rd_lTlb.data = lTlb.data;
+assign nvme_rd_lTlb.hit  = lTlb.hit;
+assign nvme_rd_sTlb.data = sTlb.data;
+assign nvme_rd_sTlb.hit  = sTlb.hit;
+`endif
+
+always_comb begin
+    // Default: BPSS RD
+    lTlb.addr  = rd_lTlb.addr;
+    sTlb.addr  = rd_sTlb.addr;
+    lTlb.pid   = rd_lTlb.pid;
+    sTlb.pid   = rd_sTlb.pid;
+    lTlb.strm  = rd_lTlb.strm;
+    sTlb.strm  = rd_sTlb.strm;
+    lTlb.wr    = rd_lTlb.wr;
+    sTlb.wr    = rd_sTlb.wr;
+    lTlb.valid = rd_lTlb.valid;
+    sTlb.valid = rd_sTlb.valid;
+
+    case (mutex[2:1])
+        OWNER_BPSS_RD: begin
+            lTlb.addr  = rd_lTlb.addr;  sTlb.addr  = rd_sTlb.addr;
+            lTlb.pid   = rd_lTlb.pid;   sTlb.pid   = rd_sTlb.pid;
+            lTlb.strm  = rd_lTlb.strm;  sTlb.strm  = rd_sTlb.strm;
+            lTlb.wr    = rd_lTlb.wr;    sTlb.wr    = rd_sTlb.wr;
+            lTlb.valid = rd_lTlb.valid;  sTlb.valid = rd_sTlb.valid;
+        end
+        OWNER_BPSS_WR: begin
+            lTlb.addr  = wr_lTlb.addr;  sTlb.addr  = wr_sTlb.addr;
+            lTlb.pid   = wr_lTlb.pid;   sTlb.pid   = wr_sTlb.pid;
+            lTlb.strm  = wr_lTlb.strm;  sTlb.strm  = wr_sTlb.strm;
+            lTlb.wr    = wr_lTlb.wr;    sTlb.wr    = wr_sTlb.wr;
+            lTlb.valid = wr_lTlb.valid;  sTlb.valid = wr_sTlb.valid;
+        end
+`ifdef EN_NVME
+        OWNER_NVME_RD: begin
+            lTlb.addr  = nvme_rd_lTlb.addr;  sTlb.addr  = nvme_rd_sTlb.addr;
+            lTlb.pid   = nvme_rd_lTlb.pid;   sTlb.pid   = nvme_rd_sTlb.pid;
+            lTlb.strm  = nvme_rd_lTlb.strm;  sTlb.strm  = nvme_rd_sTlb.strm;
+            lTlb.wr    = nvme_rd_lTlb.wr;    sTlb.wr    = nvme_rd_sTlb.wr;
+            lTlb.valid = nvme_rd_lTlb.valid;  sTlb.valid = nvme_rd_sTlb.valid;
+        end
+`endif
+        default: ;
+    endcase
+end
 
 // TLBs
 tlb_controller #(
@@ -404,6 +464,25 @@ tlb_fsm #(
 /////////////////////////////////////////////////////////////////////////////
 // DEBUG
 /////////////////////////////////////////////////////////////////////////////
+`ifdef EN_NVME
+// ----------------------------------------------------------------
+// NVMe TLB FSM (rd only, single pipeline)
+// ----------------------------------------------------------------
+nvme_tlb_fsm #(
+    .OWNER_ID(OWNER_NVME_RD)
+) inst_nvme_fsm_rd (
+    .aclk(aclk),
+    .aresetn(aresetn),
+    .lTlb(nvme_rd_lTlb),
+    .sTlb(nvme_rd_sTlb),
+    .s_nvme_req(s_nvme_rd_sq),
+    .m_nvme_rsp(m_nvme_rd_rsp),
+    .lock(nvme_rd_lock),
+    .unlock(nvme_rd_unlock),
+    .mutex(mutex)
+);
+`endif
+
 `ifdef DBG_MMU_REGION_TOP
 
 `endif

@@ -116,6 +116,11 @@ namespace coyote {
 // Retrieve static statistics for the XDMA core
 #define IOCTL_STATIC_XDMA_STATS             _IOR('P', 6, unsigned long)
 
+// NVMe IOCTLs (must match driver coyote_defs.h)
+#define IOCTL_NVME_INIT          _IOWR('F', 40, struct nvme_init_ioctl)
+#define IOCTL_NVME_CLOSE         _IOW('F', 41, unsigned long)
+#define IOCTL_NVME_IS_REGISTERED _IOWR('F', 42, struct nvme_init_ioctl)
+
 ///////////////////////////////////////////////////
 //              CONTROL REGISTERS               //
 //////////////////////////////////////////////////
@@ -462,6 +467,58 @@ public:
     #define htoll(x)                          __bswap_32(x)
     #define htols(x)                          __bswap_16(x)
 #endif
+
+/* ============================================================
+ * NVMe definitions
+ * ============================================================ */
+
+/// @brief NVMe initialization IOCTL request/response (must match driver)
+struct __attribute__((packed)) nvme_init_ioctl {
+    char     bdf[16];
+    uint32_t nsid;
+    uint64_t size;               // requested size in bytes (0 = whole namespace)
+
+    int32_t  result;
+    uint32_t dev_id;
+    uint32_t lba_size;
+    uint64_t nsze;               // total namespace size in LBAs
+    uint64_t lba_offset;         // allocated LBA start
+    uint64_t lba_count;          // allocated LBA count
+    uint64_t sq_doorbell_addr;
+    uint64_t cq_doorbell_addr;
+    uint32_t mdts;
+};
+
+/// @brief NVMe device info returned to user
+struct NvmeDevice {
+    char     bdf[16] = {0};
+    uint32_t dev_id = 0;
+    uint32_t nsid = 1;
+    uint32_t lba_size = 512;
+    uint64_t nsze = 0;           // total namespace size
+    uint64_t lba_offset = 0;     // this region's LBA start
+    uint64_t lba_count = 0;      // this region's LBA count
+    uint64_t sq_doorbell_addr = 0;
+    uint64_t cq_doorbell_addr = 0;
+    uint32_t mdts = 0;
+    bool     ready = false;
+
+    void printInfo() const {
+        std::cout << "NVMe Device: " << bdf << std::endl;
+        std::cout << "  Dev ID: " << dev_id << std::endl;
+        std::cout << "  NSID: " << nsid << std::endl;
+        std::cout << "  Total: " << nsze << " LBAs ("
+                  << (nsze * lba_size / (1024*1024*1024)) << " GB)" << std::endl;
+        std::cout << "  Allocated: " << lba_count << " LBAs ("
+                  << (lba_count * lba_size / (1024*1024*1024)) << " GB)"
+                  << " @ offset " << lba_offset << std::endl;
+        std::cout << "  LBA Size: " << lba_size << " bytes" << std::endl;
+        std::cout << "  MDTS: " << mdts << " bytes" << std::endl;
+    }
+};
+
+constexpr unsigned long const MMAP_NVME_CNFG = 0x10 << PAGE_SHIFT;
+constexpr unsigned long const NVME_CNFG_SIZE_SW = 0x1000;
 
 }
 

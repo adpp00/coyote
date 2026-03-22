@@ -573,6 +573,55 @@ long vfpga_dev_ioctl(struct file *file, unsigned int command, unsigned long arg)
             }
             break;
 
+        case IOCTL_NVME_INIT:
+        {
+            struct nvme_init_ioctl req;
+
+            if (!device_data->en_nvme) {
+                pr_warn("NVMe not enabled in this build\n");
+                return -ENODEV;
+            }
+
+            ret_val = copy_from_user(&req, (void __user *)arg, sizeof(req));
+            if (ret_val) {
+                pr_warn("NVME_INIT: copy_from_user failed\n");
+                break;
+            }
+
+            ret_val = nvme_init_for_region(device, &req);
+
+            copy_to_user((void __user *)arg, &req, sizeof(req));
+            break;
+        }
+
+        case IOCTL_NVME_CLOSE:
+        {
+            if (!device_data->en_nvme) {
+                pr_warn("NVMe not enabled in this build\n");
+                return -ENODEV;
+            }
+
+            nvme_close_for_region(device, arg);
+            break;
+        }
+
+        case IOCTL_NVME_IS_REGISTERED:
+        {
+            struct nvme_init_ioctl req;
+
+            if (!device_data->en_nvme) {
+                return -ENODEV;
+            }
+
+            ret_val = copy_from_user(&req, (void __user *)arg, sizeof(req));
+            if (ret_val) break;
+
+            req.result = nvme_is_registered(device_data, req.bdf, req.nsid, &req.dev_id);
+
+            copy_to_user((void __user *)arg, &req, sizeof(req));
+            break;
+        }
+
         default:
             dbg_info("vFPGA device %d received unknown IOCTL call %d\n", device->id, command);
             ret_val = 1;
@@ -672,6 +721,26 @@ int vfpga_dev_mmap(struct file *file, struct vm_area_struct *vma) {
         } else {
             return 0;
         }
+    }
+
+    // Memory map NVMe config registers (single instance at 0x8000)
+    if (vma->vm_pgoff == MMAP_NVME_CNFG) {
+        struct bus_driver_data *dd = device->bd_data;
+        if (!dd->en_nvme) {
+            pr_warn("NVMe not enabled in this build\n");
+            return -EINVAL;
+        }
+        uint64_t nvme_cnfg_phys = dd->bar_phys_addr[BAR_SHELL_CONFIG] + NVME_CNFG_OFFS;
+        dbg_info("fpga dev. %d, memory mapping nvme_cnfg at %llx of size %x\n",
+                 device->id, nvme_cnfg_phys, NVME_CNFG_SIZE);
+        int ret_val = remap_pfn_range(vma, vma->vm_start,
+                                      nvme_cnfg_phys >> PAGE_SHIFT,
+                                      NVME_CNFG_SIZE, vma->vm_page_prot);
+        if (ret_val) {
+            pr_warn("remap_pfn_range failed for nvme_cnfg, ret_val: %d\n", ret_val);
+            return -EIO;
+        }
+        return 0;
     }
 
     pr_warn("requested unknown memory mapping for vFPGA device\n");

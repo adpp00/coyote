@@ -206,6 +206,21 @@ module design_user_wrapper_{{ c_reg }} (
     (* io_buffer_type = "none" *) output logic                                axis_tcp_src_tvalid,
 
 {% endif %}
+{% if cnfg.en_nvme %}
+    // NVMe
+    (* io_buffer_type = "none" *) output  logic                                 nvme_cmd_req_valid,
+    (* io_buffer_type = "none" *) input   logic                                 nvme_cmd_req_ready,
+    (* io_buffer_type = "none" *) output  logic[NVME_USER_CMD_BITS-1:0]         nvme_cmd_req_data,
+
+    (* io_buffer_type = "none" *) input   logic                                 nvme_cmd_rsp_valid,
+    (* io_buffer_type = "none" *) output  logic                                 nvme_cmd_rsp_ready,
+    (* io_buffer_type = "none" *) input   logic[15:0]                           nvme_cmd_rsp_data,
+
+    (* io_buffer_type = "none" *) input   logic                                 nvme_cpl_valid,
+    (* io_buffer_type = "none" *) output  logic                                 nvme_cpl_ready,
+    (* io_buffer_type = "none" *) input   logic[$bits(nvme_cqe_t)-1:0]          nvme_cpl_data,
+
+{% endif %}
     // BSCAN
     (* io_buffer_type = "none" *) input  logic                                S_BSCAN_drck,
     (* io_buffer_type = "none" *) input  logic                                S_BSCAN_shift,
@@ -403,6 +418,26 @@ module design_user_wrapper_{{ c_reg }} (
     assign tcp_tx_stat_ready     = tcp_tx_stat.ready;
 
 {% endif %}
+{% if cnfg.en_nvme %}
+    metaIntf #(.STYPE(nvme_user_req_t)) nvme_cmd_req ();
+    metaIntf #(.STYPE(nvme_user_req_t)) nvme_cmd_req_int ();
+    metaIntf #(.STYPE(logic [15:0])) nvme_cmd_rsp ();
+    metaIntf #(.STYPE(logic [15:0])) nvme_cmd_rsp_int ();
+    metaIntf #(.STYPE(nvme_cqe_t)) nvme_cpl ();
+    metaIntf #(.STYPE(nvme_cqe_t)) nvme_cpl_int ();
+
+    assign nvme_cmd_req_valid = nvme_cmd_req.valid ;
+    assign nvme_cmd_req_data  = nvme_cmd_req.data ;
+    assign nvme_cmd_req.ready = nvme_cmd_req_ready;
+
+    assign nvme_cmd_rsp.valid = nvme_cmd_rsp_valid;
+    assign nvme_cmd_rsp.data = nvme_cmd_rsp_data ;
+    assign nvme_cmd_rsp_ready = nvme_cmd_rsp.ready;
+
+    assign nvme_cpl.valid = nvme_cpl_valid;
+    assign nvme_cpl.data = nvme_cpl_data;
+    assign nvme_cpl_ready = nvme_cpl.ready;
+{% endif %}
 {% if cnfg.en_strm %}
     AXI4S axis_host_sink ();
     AXI4S axis_host_sink_int ();
@@ -536,6 +571,12 @@ module design_user_wrapper_{{ c_reg }} (
     meta_reg #(.DATA_BITS($bits(tcp_tx_stat_t))) inst_reg_tcp_tx_stat (.aclk(aclk), .aresetn(aresetn),.s_meta(tcp_tx_stat), .m_meta(tcp_tx_stat_int));
 
 {% endif %}
+{% if cnfg.en_nvme %}
+    // NVMe desc
+    meta_reg #(.DATA_BITS($bits(nvme_user_req_t))) inst_reg_nvme_req (.aclk(aclk), .aresetn(aresetn), .s_meta(nvme_cmd_req_int), .m_meta(nvme_cmd_req));
+    meta_reg #(.DATA_BITS(16)) inst_reg_nvme_rsp (.aclk(aclk), .aresetn(aresetn), .s_meta(nvme_cmd_rsp), .m_meta(nvme_cmd_rsp_int));
+    meta_reg #(.DATA_BITS($bits(nvme_cqe_t))) inst_reg_nvme_cpl (.aclk(aclk), .aresetn(aresetn), .s_meta(nvme_cpl), .m_meta(nvme_cpl_int));
+{% endif %}
 {% if cnfg.en_strm %}
     // AXIS host
     axis_reg inst_reg_axis_host_sink (.aclk(aclk), .aresetn(aresetn), .s_axis(axis_host_sink), .m_axis(axis_host_sink_int));
@@ -607,7 +648,13 @@ module design_user_wrapper_{{ c_reg }} (
 
     `META_ASSIGN(tcp_tx_meta    , tcp_tx_meta_int)
     `META_ASSIGN(tcp_tx_stat_int    , tcp_tx_stat)
-{% endif %} 
+{% endif %}
+{% if cnfg.en_nvme %}
+    // NVMe
+    `META_ASSIGN(nvme_cmd_req_int , nvme_cmd_req)
+    `META_ASSIGN(nvme_cmd_rsp , nvme_cmd_rsp_int)
+    `META_ASSIGN(nvme_cpl , nvme_cpl_int)
+{% endif %}
 {% if cnfg.en_strm %}
     // AXIS host
     `AXIS_ASSIGN(axis_host_sink, axis_host_sink_int)
@@ -1142,6 +1189,11 @@ module design_user_wrapper_{{ c_reg }} (
     {% if cnfg.en_tcp %}
         .axis_tcp_recv(axis_tcp_sink),
         .axis_tcp_send(axis_tcp_src),
+    {% endif %}
+    {% if cnfg.en_nvme %}
+        .m_nvme_cmd_req(nvme_cmd_req_int),
+        .s_nvme_cmd_rsp(nvme_cmd_rsp_int),
+        .s_nvme_cpl(nvme_cpl_int),
     {% endif %}
         .aclk(aclk),
 	    .aresetn(aresetn)

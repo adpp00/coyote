@@ -1215,4 +1215,71 @@ void cThread::printDebug() const {
 	std::cout << std::endl;
 }
 
+// ============================================================
+// NVMe Functions
+// ============================================================
+
+NvmeDevice* cThread::initNVMe(const char* bdf, uint32_t nsid, uint64_t size) {
+    DBG1("cThread: initNVMe for " << bdf << ", nsid=" << nsid << ", size=" << size);
+
+    NvmeDevice* dev = new NvmeDevice();
+
+    nvme_init_ioctl req = {};
+    strncpy(req.bdf, bdf, sizeof(req.bdf) - 1);
+    req.nsid = nsid;
+    req.size = size;
+
+    if (ioctl(fd, IOCTL_NVME_INIT, &req)) {
+        std::cerr << "ERROR: IOCTL_NVME_INIT failed (check dmesg)" << std::endl;
+        delete dev;
+        return nullptr;
+    }
+
+    if (req.result != 0) {
+        std::cerr << "ERROR: NVMe init failed with code " << req.result << std::endl;
+        delete dev;
+        return nullptr;
+    }
+
+    strncpy(dev->bdf, bdf, sizeof(dev->bdf) - 1);
+    dev->dev_id = req.dev_id;
+    dev->nsid = nsid;
+    dev->lba_size = req.lba_size;
+    dev->nsze = req.nsze;
+    dev->lba_offset = req.lba_offset;
+    dev->lba_count = req.lba_count;
+    dev->sq_doorbell_addr = req.sq_doorbell_addr;
+    dev->cq_doorbell_addr = req.cq_doorbell_addr;
+    dev->mdts = req.mdts;
+    dev->ready = true;
+
+    std::cout << "========== NVMe Ready ==========" << std::endl;
+    dev->printInfo();
+
+    return dev;
+}
+
+void cThread::closeNVMe(NvmeDevice* dev) {
+    if (!dev) return;
+    DBG1("cThread: closeNVMe for " << dev->bdf);
+
+    if (ioctl(fd, IOCTL_NVME_CLOSE, nullptr)) {
+        std::cerr << "WARNING: IOCTL_NVME_CLOSE failed" << std::endl;
+    }
+    delete dev;
+}
+
+int32_t cThread::isNvmeRegistered(const char* bdf, uint32_t nsid) {
+    nvme_init_ioctl req = {};
+    strncpy(req.bdf, bdf, sizeof(req.bdf) - 1);
+    req.nsid = nsid;
+
+    if (ioctl(fd, IOCTL_NVME_IS_REGISTERED, &req)) {
+        return -1;
+    }
+    if (req.result != 0)
+        return -1;
+    return (int32_t)req.dev_id;
+}
+
 }

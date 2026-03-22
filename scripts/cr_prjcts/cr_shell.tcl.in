@@ -101,6 +101,9 @@ if {$cfg(en_net) eq 1} {
         add_files "$hw_dir/hdl/network/tcp"
     }
 }
+if {$cfg(en_nvme) eq 1} {
+    add_files "$hw_dir/hdl/nvme"
+}
 add_files "$proj_dir/hdl"
 
 # Top level
@@ -127,6 +130,9 @@ if {$cfg(en_card) eq 1} {
 }
 if {$cfg(en_net) eq 1} {
     source "$scripts_dir/ip_inst/network_infrastructure.tcl" -notrace
+}
+if {$cfg(en_nvme) eq 1} {
+    source "$scripts_dir/ip_inst/nvme_infrastructure.tcl" -notrace
 }
 
 ########################################################################################################

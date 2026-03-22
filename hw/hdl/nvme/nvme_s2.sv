@@ -1,0 +1,154 @@
+`timescale 1ns/1ps
+
+import lynxTypes::*;
+
+// ------------------------------------------------------------
+// Stage 2: cmd_s1 + prp_rsp -> cmd_s2 + doorbell
+// ------------------------------------------------------------
+module nvme_s2 (
+    input  logic        aclk,
+    input  logic        aresetn,
+
+    metaIntf.s          s_nvme_cmd_s1,   // nvme_cmd_s1_t
+    metaIntf.s          s_nvme_prp_rsp,  // nvme_prp_rsp_t
+
+    metaIntf.m          m_nvme_cmd_s2,   // nvme_cmd_s2_t
+    metaIntf.m          m_sq_db_req      // sq_db_req_t
+);
+
+    typedef enum logic [1:0] {
+        ST_IDLE,
+        ST_WAIT_PRP_RSP,
+        ST_SEND_CMD_S2,
+        ST_SEND_DB
+    } state_t;
+
+    state_t        state_C, state_N;
+    nvme_cmd_s1_t  cmd_C, cmd_N;
+    nvme_prp_rsp_t prp_rsp_C, prp_rsp_N;
+
+    // Temporaries
+    nvme_cmd_s2_t  cmd_s2;
+    sq_db_req_t    db_req;
+
+    always_comb begin
+        // Defaults
+        state_N   = state_C;
+        cmd_N     = cmd_C;
+        prp_rsp_N = prp_rsp_C;
+
+        s_nvme_cmd_s1.ready  = 1'b0;
+        s_nvme_prp_rsp.ready = 1'b0;
+
+        m_nvme_cmd_s2.valid  = 1'b0;
+        m_nvme_cmd_s2.data   = '0;
+
+        m_sq_db_req.valid    = 1'b0;
+        m_sq_db_req.data     = '0;
+
+        cmd_s2 = '0;
+        db_req = '0;
+
+        case (state_C)
+            // --------------------------------------------------------
+            // ST_IDLE: Accept cmd_s1
+            // --------------------------------------------------------
+            ST_IDLE: begin
+                s_nvme_cmd_s1.ready = 1'b1;
+                if (s_nvme_cmd_s1.valid) begin
+                    cmd_N   = s_nvme_cmd_s1.data;
+                    state_N = ST_WAIT_PRP_RSP;
+                end
+            end
+
+            // --------------------------------------------------------
+            // ST_WAIT_PRP_RSP: Wait for and receive PRP response
+            // --------------------------------------------------------
+            ST_WAIT_PRP_RSP: begin
+                s_nvme_prp_rsp.ready = 1'b1;
+                if (s_nvme_prp_rsp.valid) begin
+                    prp_rsp_N = s_nvme_prp_rsp.data;
+                    state_N   = ST_SEND_CMD_S2;
+                end
+            end
+
+            // --------------------------------------------------------
+            // ST_SEND_CMD_S2: Send cmd_s2 (SQE payload)
+            // --------------------------------------------------------
+            ST_SEND_CMD_S2: begin
+                // Build cmd_s2
+                cmd_s2.writeRead = cmd_C.writeRead;
+                cmd_s2.dev_id    = cmd_C.dev_id;
+                cmd_s2.nsid      = cmd_C.nsid;
+                cmd_s2.slba      = cmd_C.slba;
+                cmd_s2.nlba      = cmd_C.nlba;
+                cmd_s2.prp1      = prp_rsp_C.prp1;
+                cmd_s2.prp2      = prp_rsp_C.prp2;
+                cmd_s2.entry     = {cmd_C.dev_id, cmd_C.sq_tail};
+
+                m_nvme_cmd_s2.valid = 1'b1;
+                m_nvme_cmd_s2.data  = cmd_s2;
+
+                if (m_nvme_cmd_s2.ready) begin
+                    state_N = ST_SEND_DB;
+                end
+            end
+
+            // --------------------------------------------------------
+            // ST_SEND_DB: Send doorbell request
+            // --------------------------------------------------------
+            ST_SEND_DB: begin
+                db_req.db_addr = cmd_C.sq_db_addr;
+                db_req.sq_tail = cmd_C.sq_tail + 1'b1;
+
+                m_sq_db_req.valid = 1'b1;
+                m_sq_db_req.data  = db_req;
+
+                if (m_sq_db_req.ready) begin
+                    state_N = ST_IDLE;
+                end
+            end
+
+            default: begin
+                state_N = ST_IDLE;
+            end
+        endcase
+    end
+
+    always_ff @(posedge aclk) begin
+        if (!aresetn) begin
+            state_C   <= ST_IDLE;
+            cmd_C     <= '0;
+            prp_rsp_C <= '0;
+        end
+        else begin
+            state_C   <= state_N;
+            cmd_C     <= cmd_N;
+            prp_rsp_C <= prp_rsp_N;
+        end
+    end
+
+    // ================================================================
+    // ILA Debug
+    // ================================================================
+`define EN_ILA_NVME_S2
+`ifdef EN_ILA_NVME_S2
+    ila_nvme_s2 inst_ila_nvme_s2 (
+        .clk    (aclk),
+        .probe0 (s_nvme_cmd_s1.valid),                  // 1
+        .probe1 (s_nvme_cmd_s1.ready),                  // 1
+        .probe2 (s_nvme_prp_rsp.valid),                 // 1
+        .probe3 (s_nvme_prp_rsp.ready),                 // 1
+        .probe4 (m_nvme_cmd_s2.valid),                  // 1
+        .probe5 (m_nvme_cmd_s2.ready),                  // 1
+        .probe6 (m_nvme_cmd_s2.data.dev_id),            // N_NVME_BITS (4)
+        .probe7 (m_nvme_cmd_s2.data.slba),              // 64
+        .probe8 (m_nvme_cmd_s2.data.nlba),              // 16
+        .probe9 (m_sq_db_req.valid),                    // 1
+        .probe10(m_sq_db_req.ready),                    // 1
+        .probe11(m_sq_db_req.data.db_addr),             // 64
+        .probe12(state_C)                               // 2
+    );
+`endif
+
+endmodule

@@ -181,6 +181,20 @@ extern bool en_hmm;
 #define FPGA_SHELL_CNFG_OFFS 0x0
 #define FPGA_SHELL_CNFG_SIZE (32UL * 1024UL)
 
+// NVMe FPGA address mapping (offsets within BAR_SHELL_CONFIG)
+#define NVME_CNFG_OFFS      0x00008000  // NVMe config registers (single, at 32KB)
+#define NVME_CNFG_SIZE      0x1000      // 4KB
+#define NVME_SQ_BASE        0x04010000  // SQ BRAM: 4KB per device
+#define NVME_SQ_SIZE        0x1000
+#define NVME_CQ_BASE        0x04020000  // CQ BRAM: 4KB per device
+#define NVME_CQ_SIZE        0x1000
+#define NVME_PRP_BASE       0x04040000  // PRP BRAM: 256KB per device
+#define NVME_PRP_SIZE       0x40000
+#define MAX_NVME_DEVICES    16
+
+#define EN_NVME_MASK 0x1
+#define EN_NVME_SHIFT 0x0
+
 // Various masks to ensure the correct bits of a integer are written to a register with potentially smaller bit-width
 #define EN_AVX_MASK 0x1
 #define EN_AVX_SHIFT 0x0
@@ -309,6 +323,7 @@ extern bool en_hmm;
 #define MMAP_CNFG 0x1
 #define MMAP_CNFG_AVX 0x2
 #define MMAP_WB 0x3
+#define MMAP_NVME_CNFG 0x10
 #define MMAP_RECONFIG 0x100
 
 // vFPGA IOCTL calls; see vfpga_ops.c for more details
@@ -331,6 +346,11 @@ extern bool en_hmm;
 #define IOCTL_SHELL_NET_STATS _IOR('F', 17, unsigned long)
 #define IOCTL_SET_NOTIFICATION_PROCESSED _IOR('F', 18, unsigned long)
 #define IOCTL_GET_NOTIFICATION_VALUE _IOR('F', 19, unsigned long)
+
+// NVMe IOCTL calls
+#define IOCTL_NVME_INIT          _IOWR('F', 40, struct nvme_init_ioctl)
+#define IOCTL_NVME_CLOSE         _IOW('F', 41, unsigned long)
+#define IOCTL_NVME_IS_REGISTERED _IOWR('F', 42, struct nvme_init_ioctl)
 
 // Reconfiguration IOCTL calls; see reconfig_ops.c for more details
 #define IOCTL_ALLOC_HOST_RECONFIG_MEM _IOW('P', 1, unsigned long)
@@ -462,7 +482,9 @@ struct cyt_shell_cnfg_regs {
     uint64_t tcp_cnfg; 
     uint64_t reconfig_dcpl_app_set;
     uint64_t reconfig_dcpl_app_clr;
-    uint64_t reserved_0[22];
+    uint64_t reserved_0a;           // index 10
+    uint64_t nvme_cnfg;             // index 11 (NVME_CNFG_REG in shell_slave.sv)
+    uint64_t reserved_0b[20];       // index 12-31
     uint64_t net_ip;
     uint64_t net_mac; 
     uint64_t tcp_offs; 
@@ -1058,9 +1080,122 @@ struct bus_driver_data {
     uint64_t card_huge_offs;                 /* Address offset on card memory for huge pages */
     uint64_t card_reg_offs;                  /* Address offset on card memory for regular pages */
 
-    // ENZIAN --- DEPRECATED 
+    // NVMe
+    int en_nvme;                             /* Shell is built with NVMe support */
+    volatile uint64_t *nvme_cnfg_regs;       /* ioremap'd NVMe config registers (single, at 0x8000) */
+    struct nvme_manager *nvme_mgr;           /* Global NVMe device manager */
+
+    // ENZIAN --- DEPRECATED
     unsigned long io_phys_addr;
     unsigned long io_len;
 };
+
+/* ============================================================
+ * NVMe structures (coyote-tcp v2)
+ * ============================================================ */
+
+/**
+ * @brief NVMe FPGA config registers at offset 0x8000 (single instance)
+ * Matches nvme_cnfg_slave.sv register layout (64-bit AXI-Lite)
+ */
+struct nvme_fpga_cnfg_regs {
+    uint64_t fpga_bar_base;      /* 0x00 - FPGA PCIe BAR base address */
+    uint64_t reserved0;          /* 0x08 */
+    uint64_t dev_id;             /* 0x10 - staging: device ID (0-15) */
+    uint64_t nsid;               /* 0x18 - staging: namespace ID */
+    uint64_t lbaf;               /* 0x20 - staging: LBA format (log2 sector size) */
+    uint64_t nsze;               /* 0x28 - staging: namespace size in LBAs */
+    uint64_t doorbell_base;      /* 0x30 - staging: SQ doorbell address */
+    uint64_t valid_nvme_info;    /* 0x38 - bit[0]=commit, bit[1]=reset_queue */
+    uint64_t perm_region_id;     /* 0x40 - staging: region ID */
+    uint64_t perm_dev_id;        /* 0x48 - staging: device ID */
+    uint64_t perm_lba_offset;    /* 0x50 - staging: LBA offset */
+    uint64_t perm_lba_size;      /* 0x58 - staging: LBA size (count) */
+    uint64_t perm_valid;         /* 0x60 - bit[0]=commit permission */
+} __packed;
+
+/**
+ * @brief Per-NVMe-SSD context (PCI device, admin queue, identification info)
+ */
+struct nvme_dev_ctx {
+    struct pci_dev *pdev;
+    void __iomem   *bar0;
+    uint64_t        bar0_phys;
+    size_t          bar0_size;
+
+    dma_addr_t      asq_dma;
+    dma_addr_t      acq_dma;
+    void           *asq_virt;
+    void           *acq_virt;
+    uint16_t        asq_tail;
+    uint16_t        acq_head;
+    uint8_t         acq_phase;
+    uint16_t        admin_cid;
+    uint32_t        db_stride;
+
+    uint32_t        nsid;
+    uint32_t        lba_size;
+    uint64_t        nsze;
+    uint32_t        mdts;
+
+    bool            initialized;
+    struct mutex    lock;
+};
+
+/**
+ * @brief Per-device state (global, shared across regions)
+ */
+struct nvme_device_state {
+    struct nvme_dev_ctx ctx;
+    uint32_t dev_id;             /* 0-15 */
+    char     bdf[16];
+    uint32_t nsid;
+    uint64_t next_free_lba;      /* bump allocator */
+    uint16_t io_qid;             /* NVMe I/O queue ID (1 + dev_id) */
+    uint64_t io_sq_phys;         /* I/O SQ BRAM physical address */
+    uint64_t io_cq_phys;         /* I/O CQ BRAM physical address */
+    bool     active;
+};
+
+/**
+ * @brief Per-(region, device) LBA allocation
+ */
+struct nvme_region_alloc {
+    uint32_t dev_id;
+    uint64_t lba_offset;
+    uint64_t lba_count;
+    bool     active;
+};
+
+/**
+ * @brief Global NVMe device manager
+ */
+struct nvme_manager {
+    struct nvme_device_state devices[MAX_NVME_DEVICES];
+    int num_devices;
+    struct nvme_region_alloc region_allocs[MAX_N_REGIONS][MAX_NVME_DEVICES];
+    struct mutex lock;
+};
+
+/**
+ * @brief NVMe initialization IOCTL request/response
+ */
+struct nvme_init_ioctl {
+    /* Input */
+    char     bdf[16];
+    uint32_t nsid;
+    uint64_t size;               /* requested size in bytes */
+
+    /* Output */
+    int32_t  result;
+    uint32_t dev_id;
+    uint32_t lba_size;
+    uint64_t nsze;               /* total namespace size */
+    uint64_t lba_offset;         /* allocated LBA start */
+    uint64_t lba_count;          /* allocated LBA count */
+    uint64_t sq_doorbell_addr;
+    uint64_t cq_doorbell_addr;
+    uint32_t mdts;
+} __packed;
 
 #endif // _COYOTE_DEFS_H_

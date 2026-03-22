@@ -1,0 +1,456 @@
+/**
+ * NVMe Top-Level (coyote-tcp variant)
+ *
+ * Single shared NVMe pipeline with N_REGIONS user interfaces.
+ * All AXI ports (cnfg/prp/sq/cq) are single — no per-region split.
+ * User requests from N_REGIONS are arbitrated into the single pipeline.
+ * Doorbell DMA merges into host DMA channel upstream (no dedicated XDMA channel).
+ *
+ * Pipeline (inlined from nvme_region_top):
+ *   User Req → s0 → info_table → s1 → manage_prp → s2 → sq_ctrl (SQE write)
+ *                                                      → sq_doorbell_writer (DMA)
+ *   SSD → cq_ctrl → cqe_strm → cq_head_tracker → DMA doorbell
+ *                             → m_nvme_cpl (user completion)
+ */
+
+`timescale 1ns/1ps
+
+`define EN_ILA_NVME
+
+import lynxTypes::*;
+
+`include "lynx_macros.svh"
+
+module nvme_top (
+    input  logic        aclk,
+    input  logic        aresetn,
+
+    // Per-region user interfaces
+    metaIntf.s          s_nvme_user_req [N_REGIONS],
+    metaIntf.m          m_nvme_user_rsp [N_REGIONS],
+    metaIntf.m          m_nvme_cpl      [N_REGIONS],
+
+    // MMU interface (single pipeline)
+    metaIntf.m          m_nvme_rd_sq,
+    metaIntf.s          s_nvme_rd_rsp,
+
+    // Doorbell DMA write (merged with host DMA upstream via arbiter)
+    dmaIntf.m           m_db_wr_req,
+    AXI4S.m             m_db_wr_data,
+
+    // Single AXI interfaces (from BD interconnect)
+    AXI4L.s             s_nvme_cnfg,
+    AXI4.s              s_nvme_prp,
+    AXI4.s              s_nvme_sq,
+    AXI4.s              s_nvme_cq
+);
+
+    // ================================================================
+    // Address Offset Constants (must match driver)
+    // ================================================================
+    localparam logic [63:0] PRP_OFFSET = 64'h0404_0000;
+
+    // ================================================================
+    // Internal signal declarations
+    // ================================================================
+    logic [63:0] fpga_bar_base;
+    logic [63:0] fpga_prp_bar_base;
+    assign fpga_prp_bar_base = fpga_bar_base + PRP_OFFSET;
+
+    // ================================================================
+    // Arbitrated user interfaces (N_REGIONS -> 1)
+    // ================================================================
+    metaIntf #(.STYPE(nvme_user_req_t)) user_req_arb ();
+    metaIntf #(.STYPE(logic [15:0]))    user_rsp_arb ();
+    metaIntf #(.STYPE(nvme_cqe_t))      user_cpl_arb ();
+
+    // ================================================================
+    // Pipeline internal metaIntf
+    // ================================================================
+    metaIntf #(.STYPE(nvme_info_req_t))   tbl_req       (.aclk(aclk));
+    metaIntf #(.STYPE(nvme_info_rsp_t))   tbl_rsp       (.aclk(aclk));
+    metaIntf #(.STYPE(nvme_prp_write_t))  prp_write_strm(.aclk(aclk));
+    metaIntf #(.STYPE(nvme_user_req_t))   cmd_s0        (.aclk(aclk));
+    metaIntf #(.STYPE(nvme_prp_req_t))    prp_req       (.aclk(aclk));
+    metaIntf #(.STYPE(nvme_prp_req_t))    prp_req_q     (.aclk(aclk));
+    metaIntf #(.STYPE(nvme_prp_rsp_t))    prp_rsp       (.aclk(aclk));
+    metaIntf #(.STYPE(nvme_cmd_s1_t))     cmd_s1        (.aclk(aclk));
+    metaIntf #(.STYPE(nvme_cmd_s2_t))     sqe_strm      (.aclk(aclk));
+    metaIntf #(.STYPE(nvme_cqe_t))        cqe_strm      (.aclk(aclk));
+    metaIntf #(.STYPE(nvme_cqe_t))        cqe_strm_q    (.aclk(aclk));
+
+    metaIntf #(.STYPE(sq_db_req_t))       sq_db_strm    (.aclk(aclk));
+    metaIntf #(.STYPE(update_tbl_t))      update_tbl    (.aclk(aclk));
+    metaIntf #(.STYPE(nvme_perm_update_t)) perm_update  (.aclk(aclk));
+    metaIntf #(.STYPE(cq_head_update_t))  cq_head_upd   (.aclk(aclk));
+    metaIntf #(.STYPE(nvme_mmu_req_t))    mmu_req_int   (.aclk(aclk));
+
+    dmaIntf sq_dma_req ();
+    dmaIntf cq_dma_req ();
+    AXI4S   sq_dma_data (.aclk(aclk));
+    AXI4S   cq_dma_data (.aclk(aclk));
+
+    // ================================================================
+    // DMA Request MUX (SQ doorbell + CQ head writes)
+    // ================================================================
+    dma_axis_arbiter_2to1 inst_dma_req_mux (
+        .aclk          (aclk),
+        .aresetn       (aresetn),
+        .s_dma_req_0   (sq_dma_req),
+        .s_axis_0      (sq_dma_data),
+        .s_dma_req_1   (cq_dma_req),
+        .s_axis_1      (cq_dma_data),
+        .m_dma_req     (m_db_wr_req),
+        .m_axis        (m_db_wr_data)
+    );
+
+    // ================================================================
+    // Stage 0: Parse user request
+    // ================================================================
+    nvme_s0 inst_nvme_s0 (
+        .aclk            (aclk),
+        .aresetn         (aresetn),
+        .s_nvme_user_req (user_req_arb),
+        .m_nvme_info_req (tbl_req),
+        .m_nvme_cmd_s0   (cmd_s0)
+    );
+
+    // ================================================================
+    // Stage 1: Lookup info table, generate PRP request
+    // ================================================================
+    nvme_s1 inst_nvme_s1 (
+        .aclk            (aclk),
+        .aresetn         (aresetn),
+        .s_nvme_cmd_s0   (cmd_s0),
+        .s_nvme_info_rsp (tbl_rsp),
+        .m_nvme_user_rsp (user_rsp_arb),
+        .m_nvme_prp_req  (prp_req),
+        .m_nvme_cmd_s1   (cmd_s1)
+    );
+
+    // ================================================================
+    // FIFO: Break loop on prp_req path
+    // ================================================================
+    axis_data_fifo_meta_128 inst_prp_req_fifo (
+        .s_axis_aresetn (aresetn),
+        .s_axis_aclk    (aclk),
+        .s_axis_tvalid  (prp_req.valid),
+        .s_axis_tready  (prp_req.ready),
+        .s_axis_tdata   (prp_req.data),
+        .m_axis_tvalid  (prp_req_q.valid),
+        .m_axis_tready  (prp_req_q.ready),
+        .m_axis_tdata   (prp_req_q.data)
+    );
+
+    // ================================================================
+    // Stage 2: Combine cmd_s1 + prp_rsp -> SQE + doorbell
+    // ================================================================
+    nvme_s2 inst_nvme_s2 (
+        .aclk           (aclk),
+        .aresetn        (aresetn),
+        .s_nvme_cmd_s1  (cmd_s1),
+        .s_nvme_prp_rsp (prp_rsp),
+        .m_nvme_cmd_s2  (sqe_strm),
+        .m_sq_db_req    (sq_db_strm)
+    );
+
+    // ================================================================
+    // PRP Manager: prp_req -> MMU -> prp_rsp + prp_write
+    // ================================================================
+    nvme_manage_prp inst_nvme_manage_prp (
+        .aclk                 (aclk),
+        .aresetn              (aresetn),
+        .s_nvme_prp_req       (prp_req_q),
+        .m_nvme_prp_rsp       (prp_rsp),
+        .m_nvme_mmu_req       (mmu_req_int),
+        .s_nvme_mmu_rsp       (s_nvme_rd_rsp),
+        .m_nvme_prp_write_req (prp_write_strm),
+        .FPGA_BAR_BASE        (fpga_bar_base),
+        .FPGA_PRP_BAR_BASE    (fpga_prp_bar_base)
+    );
+
+    // ================================================================
+    // FIFO: Break loop on mmu_req path
+    // ================================================================
+    axis_data_fifo_meta_96 inst_mmu_req_fifo (
+        .s_axis_aresetn (aresetn),
+        .s_axis_aclk    (aclk),
+        .s_axis_tvalid  (mmu_req_int.valid),
+        .s_axis_tready  (mmu_req_int.ready),
+        .s_axis_tdata   (mmu_req_int.data),
+        .m_axis_tvalid  (m_nvme_rd_sq.valid),
+        .m_axis_tready  (m_nvme_rd_sq.ready),
+        .m_axis_tdata   (m_nvme_rd_sq.data)
+    );
+
+    // ================================================================
+    // Info Table
+    // ================================================================
+    nvme_info_table inst_nvme_info_table (
+        .aclk            (aclk),
+        .aresetn         (aresetn),
+        .s_tbl_req       (tbl_req),
+        .m_tbl_rsp       (tbl_rsp),
+        .s_cq_head_update(cq_head_upd),
+        .s_update_tbl    (update_tbl),
+        .s_perm_update   (perm_update)
+    );
+
+    // ================================================================
+    // PRP list controller
+    // ================================================================
+    nvme_prp_ctrl #(
+        .NVME_QUEUE_BITS (6),
+        .PRP_ADDR_BITS   (9),
+        .N_NVME_BITS     (N_NVME_BITS)
+    ) inst_nvme_prp_ctrl (
+        .aclk       (aclk),
+        .aresetn    (aresetn),
+        .s_prp      (prp_write_strm),
+        .s_prp_ctrl (s_nvme_prp)
+    );
+
+    // ================================================================
+    // SQ manager
+    // ================================================================
+    nvme_sq_ctrl #(
+        .SQ_ADDR_BITS (6),
+        .N_NVME_BITS  (N_NVME_BITS)
+    ) inst_nvme_sq_ctrl (
+        .aclk       (aclk),
+        .aresetn    (aresetn),
+        .s_sqe      (sqe_strm),
+        .s_prp_ctrl (s_nvme_sq)
+    );
+
+    // ================================================================
+    // CQ manager
+    // ================================================================
+    nvme_cq_ctrl #(
+        .CQ_ADDR_BITS  (6),
+        .READ_LATENCY  (1)
+    ) inst_nvme_cq_ctrl (
+        .aclk      (aclk),
+        .aresetn   (aresetn),
+        .m_cqe     (cqe_strm),
+        .s_prp_ctrl(s_nvme_cq)
+    );
+
+    // ================================================================
+    // Config Slave
+    // ================================================================
+    nvme_cnfg_slave inst_nvme_cnfg_slave (
+        .aclk              (aclk),
+        .aresetn           (aresetn),
+        .s_nvme_cnfg       (s_nvme_cnfg),
+        .m_update_tbl      (update_tbl),
+        .m_perm_update     (perm_update),
+        .fpga_bar_base     (fpga_bar_base)
+    );
+
+    // ================================================================
+    // Per-device doorbell address table
+    // Populated when host writes device info (update_tbl trigger)
+    // ================================================================
+    localparam int unsigned N_NVME = (1 << N_NVME_BITS);
+    logic [63:0] sq_db_addr_tbl [N_NVME];
+
+    always_ff @(posedge aclk) begin
+        if (!aresetn) begin
+            for (int d = 0; d < N_NVME; d++)
+                sq_db_addr_tbl[d] <= '0;
+        end
+        else if (update_tbl.valid && update_tbl.ready) begin
+            sq_db_addr_tbl[update_tbl.data.dev_id] <= update_tbl.data.sq_db_addr;
+        end
+    end
+
+    // ================================================================
+    // CQE FIFO + user completion output
+    // ================================================================
+    axis_data_fifo_meta_32 inst_cqe_fifo (
+        .s_axis_aresetn (aresetn),
+        .s_axis_aclk    (aclk),
+        .s_axis_tvalid  (cqe_strm.valid),
+        .s_axis_tready  (cqe_strm.ready),
+        .s_axis_tdata   (cqe_strm.data),
+        .m_axis_tvalid  (cqe_strm_q.valid),
+        .m_axis_tready  (cqe_strm_q.ready),
+        .m_axis_tdata   (cqe_strm_q.data)
+    );
+
+    assign user_cpl_arb.valid = cqe_strm_q.valid;
+    assign user_cpl_arb.data  = cqe_strm_q.data;
+    assign cqe_strm_q.ready   = user_cpl_arb.ready;
+
+    // ================================================================
+    // SQ Doorbell Writer
+    // ================================================================
+    nvme_sq_doorbell_writer inst_sq_doorbell_writer (
+        .aclk         (aclk),
+        .aresetn      (aresetn),
+        .s_sq_db_req  (sq_db_strm),
+        .m_dma_wr_req (sq_dma_req),
+        .m_dma_wr_data(sq_dma_data)
+    );
+
+    // ================================================================
+    // CQ Head Tracker
+    // ================================================================
+    nvme_cq_head_tracker #(
+        .NVME_QUEUE_BITS (6),
+        .N_NVME_BITS     (N_NVME_BITS),
+        .BATCH_SIZE      (4),
+        .TIMEOUT_CYCLES  (80)
+    ) inst_cq_head_tracker (
+        .aclk            (aclk),
+        .aresetn         (aresetn),
+        .cqe_valid       (cqe_strm.valid && cqe_strm.ready),
+        .cqe_dev_id      (cqe_strm.data.dev_id),
+        .m_cq_head_update(cq_head_upd),
+        .m_cq_dma_req    (cq_dma_req),
+        .m_cq_dma_data   (cq_dma_data),
+        .sq_db_addr_tbl  (sq_db_addr_tbl)
+    );
+
+    // ================================================================
+    // User request arbitration (N_REGIONS -> 1)
+    // ================================================================
+    generate
+    if (N_REGIONS == 1) begin : gen_single_region
+
+        // Direct passthrough + tag region_id = 0
+        nvme_user_req_t tagged_req_single;
+        always_comb begin
+            tagged_req_single           = s_nvme_user_req[0].data;
+            tagged_req_single.region_id = '0;
+        end
+
+        assign user_req_arb.valid       = s_nvme_user_req[0].valid;
+        assign user_req_arb.data        = tagged_req_single;
+        assign s_nvme_user_req[0].ready = user_req_arb.ready;
+
+        assign m_nvme_user_rsp[0].valid = user_rsp_arb.valid;
+        assign m_nvme_user_rsp[0].data  = user_rsp_arb.data;
+        assign user_rsp_arb.ready       = m_nvme_user_rsp[0].ready;
+
+        assign m_nvme_cpl[0].valid      = user_cpl_arb.valid;
+        assign m_nvme_cpl[0].data       = user_cpl_arb.data;
+        assign user_cpl_arb.ready       = m_nvme_cpl[0].ready;
+
+    end
+    else begin : gen_multi_region
+
+        // ---- Request arbitration (round-robin) ----
+        logic [$clog2(N_REGIONS)-1:0] req_grant;
+        logic [$clog2(N_REGIONS)-1:0] req_last_grant;
+        logic [N_REGIONS-1:0] req_valid_vec;
+        logic req_granted;
+
+        nvme_user_req_t req_data_vec [N_REGIONS];
+        for (genvar i = 0; i < N_REGIONS; i++) begin
+            assign req_valid_vec[i] = s_nvme_user_req[i].valid;
+            assign req_data_vec[i]  = s_nvme_user_req[i].data;
+        end
+
+        always_ff @(posedge aclk) begin
+            if (!aresetn)
+                req_last_grant <= '0;
+            else if (user_req_arb.valid && user_req_arb.ready)
+                req_last_grant <= req_grant;
+        end
+
+        always_comb begin
+            req_granted = 1'b0;
+            req_grant = req_last_grant;
+            for (int i = 0; i < N_REGIONS; i++) begin
+                automatic logic [$clog2(N_REGIONS)-1:0] idx;
+                idx = (req_last_grant + 1 + i) % N_REGIONS;
+                if (!req_granted && req_valid_vec[idx]) begin
+                    req_grant = idx;
+                    req_granted = 1'b1;
+                end
+            end
+        end
+
+        // Tag region_id onto the granted request
+        nvme_user_req_t tagged_req_multi;
+        always_comb begin
+            tagged_req_multi           = req_data_vec[req_grant];
+            tagged_req_multi.region_id = req_grant;
+        end
+
+        assign user_req_arb.valid = req_granted;
+        assign user_req_arb.data  = tagged_req_multi;
+
+        for (genvar i = 0; i < N_REGIONS; i++) begin
+            assign s_nvme_user_req[i].ready = (req_grant == i) && user_req_arb.ready;
+        end
+
+        // ---- Response/completion broadcast ----
+        // TODO: region-id based demux when needed
+        for (genvar i = 0; i < N_REGIONS; i++) begin
+            assign m_nvme_user_rsp[i].valid = user_rsp_arb.valid;
+            assign m_nvme_user_rsp[i].data  = user_rsp_arb.data;
+            assign m_nvme_cpl[i].valid      = user_cpl_arb.valid;
+            assign m_nvme_cpl[i].data       = user_cpl_arb.data;
+        end
+        assign user_rsp_arb.ready = m_nvme_user_rsp[0].ready;
+        assign user_cpl_arb.ready = m_nvme_cpl[0].ready;
+
+    end
+    endgenerate
+
+    // ================================================================
+    // ILA Debug
+    // ================================================================
+`ifdef EN_ILA_NVME
+    ila_nvme_top inst_ila_nvme_top (
+        .clk    (aclk),
+        // user_req_arb
+        .probe0 (user_req_arb.valid),                   // 1
+        .probe1 (user_req_arb.ready),                   // 1
+        .probe2 (user_req_arb.data.dev_id),             // N_NVME_BITS (4)
+        .probe3 (user_req_arb.data.naddr),              // ADDR_BITS (48)
+        .probe4 (user_req_arb.data.len),                // LEN_BITS (28)
+        .probe5 (user_req_arb.data.writeRead),          // 1
+        .probe6 (user_req_arb.data.region_id),          // REGION_ID_BITS
+        // user_rsp_arb
+        .probe7 (user_rsp_arb.valid),                   // 1
+        .probe8 (user_rsp_arb.ready),                   // 1
+        .probe9 (user_rsp_arb.data),                    // 16
+        // user_cpl_arb
+        .probe10(user_cpl_arb.valid),                   // 1
+        .probe11(user_cpl_arb.ready),                   // 1
+        .probe12(user_cpl_arb.data.dev_id),             // N_NVME_BITS (4)
+        .probe13(user_cpl_arb.data.status),             // 15
+        .probe14(user_cpl_arb.data.phase),              // 1
+        // tbl_req / tbl_rsp
+        .probe15(tbl_req.valid),                        // 1
+        .probe16(tbl_req.ready),                        // 1
+        .probe17(tbl_rsp.valid),                        // 1
+        .probe18(tbl_rsp.ready),                        // 1
+        .probe19(tbl_rsp.data.error),                   // 16
+        // sqe_strm
+        .probe20(sqe_strm.valid),                       // 1
+        .probe21(sqe_strm.ready),                       // 1
+        // sq_db_strm
+        .probe22(sq_db_strm.valid),                     // 1
+        .probe23(sq_db_strm.ready),                     // 1
+        // cqe_strm
+        .probe24(cqe_strm.valid),                       // 1
+        .probe25(cqe_strm.ready),                       // 1
+        // m_db_wr_req / m_db_wr_data
+        .probe26(m_db_wr_req.valid),                    // 1
+        .probe27(m_db_wr_req.ready),                    // 1
+        .probe28(m_db_wr_data.tvalid),                  // 1
+        .probe29(m_db_wr_data.tready),                  // 1
+        // update_tbl / perm_update
+        .probe30(update_tbl.valid),                     // 1
+        .probe31(update_tbl.ready),                     // 1
+        .probe32(perm_update.valid),                    // 1
+        .probe33(perm_update.ready)                     // 1
+    );
+`endif
+
+endmodule

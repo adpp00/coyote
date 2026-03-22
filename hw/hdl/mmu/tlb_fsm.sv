@@ -74,7 +74,7 @@ module tlb_fsm #(
 	// Mutex
 	output logic 						lock,
 	output logic 						unlock,
-	input  logic [1:0]					mutex
+	input  logic [2:0]					mutex
 );
 
 // ----------------------------------------------------------------------------------------------------------

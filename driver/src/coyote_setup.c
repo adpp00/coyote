@@ -20,6 +20,7 @@
  */
 
 #include "coyote_setup.h"
+#include "vfpga/vfpga_ops.h"
 
 ////////////////////////////////////////////////
 //            SHELL CONFIGURATION             //  
@@ -99,6 +100,27 @@ int read_shell_config(struct bus_driver_data *data) {
 
     data->en_tcp = (data->shell_cnfg->tcp_cnfg & EN_TCP_MASK) >> EN_TCP_SHIFT;
     dbg_info("enabled TCP/IP %d, port %d\n", data->en_tcp, data->qsfp);
+
+    data->en_nvme = (data->shell_cnfg->nvme_cnfg & EN_NVME_MASK) >> EN_NVME_SHIFT;
+    dbg_info("enabled NVMe %d\n", data->en_nvme);
+
+    /* NVMe manager init */
+    if (data->en_nvme) {
+        data->nvme_mgr = kzalloc(sizeof(struct nvme_manager), GFP_KERNEL);
+        if (data->nvme_mgr)
+            mutex_init(&data->nvme_mgr->lock);
+
+        data->nvme_cnfg_regs = ioremap(data->bar_phys_addr[BAR_SHELL_CONFIG]
+                                       + NVME_CNFG_OFFS, NVME_CNFG_SIZE);
+        if (data->nvme_cnfg_regs) {
+            /* Set FPGA BAR base once */
+            volatile struct nvme_fpga_cnfg_regs *cnfg =
+                (volatile struct nvme_fpga_cnfg_regs *)data->nvme_cnfg_regs;
+            cnfg->fpga_bar_base = data->bar_phys_addr[BAR_SHELL_CONFIG];
+            dbg_info("nvme_cnfg mapped at %p, fpga_bar_base=0x%lx\n",
+                     data->nvme_cnfg_regs, data->bar_phys_addr[BAR_SHELL_CONFIG]);
+        }
+    }
 
     data->en_net = data->en_rdma | data->en_tcp;
     if(data->en_net) {
@@ -496,6 +518,15 @@ void teardown_vfpga_devices(struct bus_driver_data *data) {
 }
 
 void free_vfpga_devices(struct bus_driver_data *data) {
+    /* NVMe cleanup */
+    if (data->en_nvme) {
+        nvme_manager_cleanup(data);
+        if (data->nvme_cnfg_regs) {
+            iounmap((void *)data->nvme_cnfg_regs);
+            data->nvme_cnfg_regs = NULL;
+        }
+    }
+
     kfree(data->vfpga_dev);
     dbg_info("memory for vFPGA device freed\n");
 

@@ -94,6 +94,13 @@ module design_user_logic_c{{ c_cnfg }}_{{ c_reg }} (
     AXI4S.m                    axis_tcp_send,
 
 {% endif %}
+{% if cnfg.en_nvme %}
+    // NVMe
+    metaIntf.m                 m_nvme_cmd_req,
+    metaIntf.s                 s_nvme_cmd_rsp,
+    metaIntf.s                 s_nvme_cpl,
+
+{% endif %}
     // Clock and reset
     input  wire                 aclk,
     input  wire[0:0]            aresetn
@@ -138,9 +145,14 @@ module design_user_logic_c{{ c_cnfg }}_{{ c_reg }} (
 //always_comb axis_tcp_send[{{i}}].tie_off_m();
 {% endfor %}
 {% endif %}
+{% if cnfg.en_nvme %}
+//always_comb m_nvme_cmd_req.tie_off_m();
+//always_comb s_nvme_cmd_rsp.tie_off_s();
+//always_comb s_nvme_cpl.tie_off_s();
+{% endif %}
 
 /* ---------------------------------------------------------------------- */
-// USER LOGIC 
+// USER LOGIC
 /* ---------------------------------------------------------------------- */
 {% if cnfg.load_apps %}
 `include "vfpga_top.svh"

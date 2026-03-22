@@ -56,6 +56,9 @@
 {% if cnfg.en_tcp %}
 `define EN_TCP
 {% endif %}
+{% if cnfg.en_nvme %}
+`define EN_NVME
+{% endif %}
 {% if cnfg.en_net_0 %}
 `define EN_NET_0
 {% endif %}
@@ -198,6 +201,7 @@ package lynxTypes;
     parameter integer STRM_HOST = 1;
     parameter integer STRM_RDMA = 2;
     parameter integer STRM_TCP = 3;
+    parameter integer STRM_NVME = STRM_HOST; // NVMe PRP reads go through host memory path
 
     // Queue depth
     parameter integer QUEUE_DEPTH = 8;
@@ -376,6 +380,7 @@ package lynxTypes;
     parameter integer MEM_FLOW = {{ cnfg.en_mem }};
     parameter integer RDMA_FLOW = {{ cnfg.en_rdma }};
     parameter integer TCP_FLOW = {{ cnfg.en_tcp }};
+    parameter integer NVME_FLOW = {{ cnfg.en_nvme }};
     parameter integer N_WBS = {{ cnfg.n_wbs }};
     parameter integer QSFP = {{ cnfg.qsfp }};
 
@@ -765,5 +770,182 @@ package lynxTypes;
         end
     end
     endfunction
+
+    // ----------------------------------------------------------------
+    // NVMe
+    // ----------------------------------------------------------------
+
+    parameter integer N_NVME_BITS = 4;
+    parameter integer NVME_QUEUE_BITS = 6;
+    parameter integer PRP_ADDR_BITS = 9;
+    parameter integer DEV_ID_BITS = 4;
+    parameter integer NSID_BITS = 4;
+    parameter integer LBAF_BITS = 4;
+    parameter integer N_NVME_MAX = 16;
+    parameter integer REGION_ID_BITS = $clog2(N_REGIONS) > 0 ? $clog2(N_REGIONS) : 1;
+    parameter integer NVME_USER_CMD_BITS = DEV_ID_BITS + 1 + NSID_BITS + ADDR_BITS + LEN_BITS + ADDR_BITS;
+
+    // MMU request/response
+    typedef struct packed {
+        logic [ADDR_BITS-1:0] vaddr;
+        logic [LEN_BITS-1:0] len;
+    } nvme_mmu_req_t;
+
+    typedef struct packed {
+        logic [ADDR_BITS-1:0] paddr;
+        logic [LEN_BITS-1:0] len;
+        logic fault;
+        logic is_host;
+        logic last;
+    } nvme_mmu_rsp_t;
+
+    // PRP request/response
+    typedef struct packed {
+        logic [ADDR_BITS-1:0] vaddr;
+        logic [LEN_BITS-1:0]  len;
+        logic [N_NVME_BITS-1:0] dev_id;
+        logic [NVME_QUEUE_BITS-1:0] sq_tail;
+        logic writeRead;
+    } nvme_prp_req_t;
+
+    typedef struct packed {
+        logic [63:0] prp1;
+        logic [63:0] prp2;
+    } nvme_prp_rsp_t;
+
+    // PRP write (to PRP BRAM)
+    typedef struct packed {
+        logic [NVME_QUEUE_BITS+PRP_ADDR_BITS+N_NVME_BITS-1:0] addr;
+        logic [63:0]                                        data;
+    } nvme_prp_write_t;
+
+    // User request (from user logic)
+    typedef struct packed {
+        logic [DEV_ID_BITS-1:0] dev_id;
+        logic                   writeRead;
+        logic [NSID_BITS-1:0]   nsid;
+        logic [ADDR_BITS-1:0]   vaddr;
+        logic [LEN_BITS-1:0]    len;
+        logic [ADDR_BITS-1:0]   naddr;      // user-visible offset (within permitted region)
+        logic [REGION_ID_BITS-1:0] region_id; // tagged by nvme_top arbiter
+    } nvme_user_req_t;
+
+    // Info table request (s0 → info_table)
+    typedef struct packed {
+        logic [N_NVME_BITS-1:0]    dev_id;
+        logic [NSID_BITS-1:0]      nsid;
+        logic [REGION_ID_BITS-1:0] region_id;
+        logic [ADDR_BITS-1:0]      naddr;      // user offset (for permission check)
+        logic [LEN_BITS-1:0]       len;         // request size (for permission check)
+    } nvme_info_req_t;
+
+    // Info table response (info_table → s1)
+    typedef struct packed {
+        logic [15:0]                error;
+        logic [NVME_QUEUE_BITS-1:0] sq_tail;
+        logic [N_NVME_BITS-1:0]    dev_id;
+        logic [NSID_BITS-1:0]      nsid;
+        logic [LBAF_BITS-1:0]      lbaf;
+        logic [63:0]               nsze;
+        logic [63:0]               sq_db_addr;
+        logic [63:0]               fpga_prp_bar_base;
+        logic                      valid;
+        logic [63:0]               lba_offset;  // actual LBA base for this region+device
+    } nvme_info_rsp_t;
+
+    // Pipeline stage 1 output
+    typedef struct packed {
+        logic [N_NVME_BITS-1:0]     dev_id;
+        logic                       writeRead;
+        logic [NSID_BITS-1:0]       nsid;
+        logic [NVME_QUEUE_BITS-1:0] sq_tail;
+        logic [63:0]                slba;
+        logic [15:0]                nlba;
+        logic [63:0]                sq_db_addr;
+    } nvme_cmd_s1_t;
+
+    // Pipeline stage 2 output (SQE)
+    typedef struct packed {
+        logic                       writeRead;
+        logic [N_NVME_BITS-1:0]     dev_id;
+        logic [NSID_BITS-1:0]       nsid;
+        logic [63:0]                slba;
+        logic [15:0]                nlba;
+        logic [63:0]                prp1;
+        logic [63:0]                prp2;
+        logic [N_NVME_BITS+NVME_QUEUE_BITS-1:0] entry;  // {dev_id, sq_tail}
+    } nvme_cmd_s2_t;
+
+    // Completion queue entry (from SSD, with dev_id for multi-device)
+    typedef struct packed {
+        logic [N_NVME_BITS-1:0] dev_id;
+        logic [14:0] status;
+        logic        phase;
+    } nvme_cqe_t;
+
+    // ---- NVMe types (previously in nvme_types_pkg) ----
+
+    // Error codes
+    typedef enum logic [15:0] {
+        NVME_NO_ERROR               = 16'h0000,
+        NVME_NO_DEVICE              = 16'h0001,
+        NVME_NO_REMAINING_SQ_ENTRIES = 16'h0002,
+        NVME_ADDRESS_NOT_ALIGNED    = 16'h0003,
+        NVME_INVALID_LENGTH         = 16'h0004,
+        NVME_MMU_FAULT              = 16'h0005,
+        NVME_PERMISSION_DENIED      = 16'h0006
+    } nvme_error_e;
+
+    // Doorbell request
+    typedef struct packed {
+        logic [63:0]                     db_addr;
+        logic [NVME_QUEUE_BITS-1:0]      sq_tail;
+    } sq_db_req_t;
+
+    // Device info update (cnfg_slave → info_table)
+    typedef struct packed {
+        logic [N_NVME_BITS-1:0]          dev_id;
+        logic [NSID_BITS-1:0]            nsid;
+        logic [LBAF_BITS-1:0]            lbaf;
+        logic [63:0]                     nsze;
+        logic [63:0]                     sq_db_addr;
+        logic                            valid;
+        logic                            reset_queue;
+    } update_tbl_t;
+
+    // Permission update (cnfg_slave → info_table, per region×device)
+    typedef struct packed {
+        logic [REGION_ID_BITS-1:0]       region_id;
+        logic [N_NVME_BITS-1:0]          dev_id;
+        logic [63:0]                     lba_offset;
+        logic [63:0]                     lba_size;
+    } nvme_perm_update_t;
+
+    // CQ head update (cq_head_tracker → info_table)
+    typedef struct packed {
+        logic [N_NVME_BITS-1:0]          dev_id;
+        logic [NVME_QUEUE_BITS-1:0]      cq_head;
+    } cq_head_update_t;
+
+    // NVMe info entry (stored in info_table, per device)
+    typedef struct packed {
+        logic [LBAF_BITS-1:0]            lbaf;
+        logic [63:0]                     nsze;
+        logic [63:0]                     sq_db_addr;
+        logic                            valid;
+    } nvme_info_entry_t;
+
+    // Permission entry (stored in info_table, per region×device)
+    typedef struct packed {
+        logic [63:0]                     lba_offset;
+        logic [63:0]                     lba_size;
+        logic                            valid;
+    } nvme_perm_entry_t;
+
+    // Queue pointer (per device)
+    typedef struct packed {
+        logic [NVME_QUEUE_BITS-1:0]      sq_tail;
+        logic [NVME_QUEUE_BITS-1:0]      cq_head;
+    } nvme_queue_ptr_t;
 
 endpackage

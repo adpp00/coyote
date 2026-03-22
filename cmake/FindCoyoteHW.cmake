@@ -151,6 +151,12 @@ set(EN_NET_1 0 CACHE STRING "QSFP port 1")
 set(PMTU_BYTES 4096 CACHE STRING "PMTU size")
 
 ##
+## NVME
+##
+# Enable NVMe access
+set(EN_NVME 0 CACHE STRING "Enable NVMe")
+
+##
 ## RECONFIGURATION
 ##
 # Enable partial reconfiguration
@@ -491,12 +497,17 @@ macro(validation_checks_hw)
         # Total memory AXI channels
         set(N_MEM_CHAN 0)
         set(N_NET_CHAN 0)
+        if(EN_NVME)
+            set(N_NVME_CHAN 1)
+        else()
+            set(N_NVME_CHAN 0)
+        endif()
         MATH(EXPR N_NET_CHAN "${N_TCP_CHAN} + ${N_RDMA_CHAN}")
         if(EN_MEM)
-            MATH(EXPR N_MEM_CHAN "${N_REGIONS} * ${N_CARD_AXI} + 1 + ${N_MEM_CHAN}")
+            MATH(EXPR N_MEM_CHAN "${N_REGIONS} * ${N_CARD_AXI} + 1 + ${N_MEM_CHAN} + ${N_NVME_CHAN}")
         endif()
         if(EN_TCP OR EN_RDMA)
-            MATH(EXPR N_MEM_CHAN "${N_NET_CHAN} + ${N_MEM_CHAN}")
+            MATH(EXPR N_MEM_CHAN "${N_NET_CHAN} + ${N_MEM_CHAN} + ${N_NVME_CHAN}")
         endif()
 
         # Most boards only up to 4

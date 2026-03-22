@@ -66,6 +66,12 @@ module mmu_top #(
     metaIntf.m                          m_bpss_rd_cq [N_REGIONS],
     metaIntf.m                          m_bpss_wr_cq [N_REGIONS],
 
+`ifdef EN_NVME
+    // NVMe TLB (single pipeline)
+    metaIntf.s                          s_nvme_rd_sq,
+    metaIntf.m                          m_nvme_rd_rsp,
+`endif
+
 `ifdef EN_STRM
 	// Stream DMAs
     dmaIntf.m                           m_rd_XDMA_host,
@@ -138,6 +144,28 @@ module mmu_top #(
     metaIntf #(.STYPE(ack_t)) wr_card_done [N_REGIONS] ();
 `endif
 
+`ifdef EN_NVME
+// NVMe connection arrays: region 0 bridges to actual NVMe ports,
+// other regions get tied off (Vivado does not support ternary on interfaces)
+metaIntf #(.STYPE(nvme_mmu_req_t)) nvme_rd_sq_arr [N_REGIONS] ();
+metaIntf #(.STYPE(nvme_mmu_rsp_t)) nvme_rd_rsp_arr [N_REGIONS] ();
+
+// Region 0: forward to/from mmu_top NVMe ports
+assign nvme_rd_sq_arr[0].valid = s_nvme_rd_sq.valid;
+assign nvme_rd_sq_arr[0].data  = s_nvme_rd_sq.data;
+assign s_nvme_rd_sq.ready      = nvme_rd_sq_arr[0].ready;
+
+assign m_nvme_rd_rsp.valid      = nvme_rd_rsp_arr[0].valid;
+assign m_nvme_rd_rsp.data       = nvme_rd_rsp_arr[0].data;
+assign nvme_rd_rsp_arr[0].ready = m_nvme_rd_rsp.ready;
+
+// Non-zero regions: tie off
+for (genvar t = 1; t < N_REGIONS; t++) begin : gen_nvme_tieoff
+    assign nvme_rd_sq_arr[t].valid = 1'b0;
+    assign nvme_rd_sq_arr[t].data  = '0;
+end
+`endif
+
 metaIntf #(.STYPE(irq_pft_t)) rd_pfault_irq [N_REGIONS] ();
 logic [N_REGIONS-1:0][LEN_BITS-1:0] rd_pfault_rng;
 metaIntf #(.STYPE(irq_pft_t)) wr_pfault_irq [N_REGIONS] ();
@@ -159,8 +187,12 @@ for(genvar i = 0; i < N_REGIONS; i++) begin
         .aresetn(aresetn),
         .s_axi_ctrl_sTlb(s_axi_ctrl_sTlb[i]), // 
         .s_axi_ctrl_lTlb(s_axi_ctrl_lTlb[i]), //
-        .s_bpss_rd_sq(s_bpss_rd_sq[i]), // 
-		.s_bpss_wr_sq(s_bpss_wr_sq[i]), // 
+        .s_bpss_rd_sq(s_bpss_rd_sq[i]), //
+		.s_bpss_wr_sq(s_bpss_wr_sq[i]), //
+    `ifdef EN_NVME
+        .s_nvme_rd_sq(nvme_rd_sq_arr[i]),
+        .m_nvme_rd_rsp(nvme_rd_rsp_arr[i]),
+    `endif
     `ifdef EN_STRM
         .m_rd_HDMA(rd_HDMA_arb[i]), // 
         .m_wr_HDMA(wr_HDMA_arb[i]), // 

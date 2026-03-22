@@ -376,6 +376,25 @@ public:
 	/// Utility function, prints stats about this cThread including the number of commands invalidations etc.
 	void printDebug() const;
 
+	/**
+	 * @brief Initialize an NVMe device and allocate LBA range for this region
+	 * @param bdf PCI BDF string (e.g., "0000:65:00.0" or "65:00.0")
+	 * @param nsid Namespace ID (default: 1)
+	 * @param size Requested size in bytes (0 = whole namespace)
+	 * @return NvmeDevice pointer or nullptr on failure
+	 */
+	NvmeDevice* initNVMe(const char* bdf, uint32_t nsid = 1, uint64_t size = 0);
+
+	/**
+	 * @brief Close NVMe device and release region's allocations
+	 */
+	void closeNVMe(NvmeDevice* dev);
+
+	/**
+	 * @brief Check if an NVMe device (bdf+nsid) is already registered
+	 * @return dev_id if registered, -1 if not
+	 */
+	int32_t isNvmeRegistered(const char* bdf, uint32_t nsid = 1);
 };
 
 }
