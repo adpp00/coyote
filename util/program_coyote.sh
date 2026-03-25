@@ -145,7 +145,7 @@ save_pcie_info() {
         return 1
     fi
     
-    local pcie_cap=$(sudo lspci -s "$ROOT_PORT" -vv 2>/dev/null | grep -oP 'Capabilities: \[\K[0-9a-fA-F]+(?=\] Express)')
+    local pcie_cap=$(sudo lspci -s "$ROOT_PORT" -vv 2>/dev/null | sed -n 's/.*Capabilities: \[\([0-9a-fA-F]*\)\] Express.*/\1/p' | head -1)
     [ -z "$pcie_cap" ] && pcie_cap="58"
     LINK_CTL=$(printf "%X" $((0x$pcie_cap + 0x10)))
     
@@ -305,10 +305,6 @@ echo -e "${BOLD}  FPGA Programming (JTAG)${NC}"
 echo -e "${BOLD}======================================${NC}"
 echo ""
 
-detect_serial
-detect_device
-
-echo ""
 echo -e "${BOLD}Configuration:${NC}"
 echo "  Bitstream : $BITSTREAM"
 [ -n "$LTX" ] && echo "  LTX       : $LTX"
@@ -320,9 +316,9 @@ save_pcie_info
 pci_remove
 
 echo ""
-echo -n "  Programming FPGA... "
+echo -n "  Programming FPGA (single Vivado session)... "
 
-CMD="$VIVADO -mode batch -nolog -nojournal -source $TCL_SCRIPT -tclargs $SERIAL $DEVICE $BITSTREAM"
+CMD="$VIVADO -mode batch -nolog -nojournal -source $TCL_SCRIPT -tclargs $BITSTREAM"
 [ -n "$LTX" ] && CMD="$CMD $LTX"
 
 if eval "$CMD" > /dev/null 2>&1; then
@@ -335,6 +331,10 @@ fi
 
 [ $HOTPLUG -eq 1 ] && pci_hotplug
 [ -n "$DRIVER" ] && insert_driver
+
+
+sudo rmmod ftdi_sio 
+sudo rmmod usbserial 
 
 echo ""
 info "======================================="

@@ -16,7 +16,7 @@ import lynxTypes::*;
 
 module nvme_prp_ctrl #(
     parameter integer NVME_QUEUE_BITS = lynxTypes::NVME_QUEUE_BITS,  // Default: 6 (64 entries)
-    parameter integer PRP_ADDR_BITS   = lynxTypes::PRP_ADDR_BITS,    // Default: 9 (512 entries/page)
+    parameter integer PRP_ADDR_BITS   = lynxTypes::PRP_ADDR_BITS,    // Default: 5 (32 entries, 128KB MTU)
     parameter integer N_NVME_BITS     = lynxTypes::N_NVME_BITS       // Default: 1 (2 devices)
 )(
     input  logic        aclk,
@@ -30,14 +30,15 @@ module nvme_prp_ctrl #(
     // ================================================================
     // Derived Parameters
     // ================================================================
-    // Total address bits for BRAM indexing: {dev_id, queue_idx, prp_entry}
-    localparam integer unsigned ADDR_BITS = NVME_QUEUE_BITS + PRP_ADDR_BITS + N_NVME_BITS;
+    // Internal BRAM address: {dev_id, queue_idx, prp_entry}
+    localparam integer unsigned ADDR_BITS = N_NVME_BITS + NVME_QUEUE_BITS + PRP_ADDR_BITS;
 
-    // AXI BRAM Controller (DATA_WIDTH=64) outputs byte addresses
-    // Each AXI word = 8 bytes → byte offset bits = log2(8) = 3
+    // External BAR address: {dev_id, queue_idx, page_offset[11:0]}
+    // SSD sees 4KB (2^12) per (dev_id, sq_tail), BRAM stores only 2^PRP_ADDR_BITS entries
     localparam integer unsigned PRP_DATA_BYTES  = 8;                              // 64-bit PRP entry
     localparam integer unsigned BRAM_BYTE_BITS  = $clog2(PRP_DATA_BYTES);         // = 3
-    localparam integer unsigned BRAM_ADDR_WIDTH = ADDR_BITS + BRAM_BYTE_BITS;
+    localparam integer unsigned EXT_PAGE_BITS   = 12;                             // 4KB page
+    localparam integer unsigned EXT_ADDR_WIDTH  = N_NVME_BITS + NVME_QUEUE_BITS + EXT_PAGE_BITS;
 
     // ================================================================
     // Internal Signals
@@ -51,8 +52,8 @@ module nvme_prp_ctrl #(
 
     // Read port B (from AXI BRAM controller)
     logic                      bram_en_a;
-    logic [BRAM_ADDR_WIDTH-1:0] bram_addr_a;
-    logic [ADDR_BITS-1:0]      b_addr;           // Entry index into RAM
+    logic [EXT_ADDR_WIDTH-1:0] bram_addr_a;      // External byte address (22 bits)
+    logic [ADDR_BITS-1:0]      b_addr;           // Remapped internal entry index
     logic [63:0]               b_data_out;
 
     // 64-bit read data back to AXI BRAM Controller
@@ -65,7 +66,7 @@ module nvme_prp_ctrl #(
         .s_axi_aclk       (aclk),
         .s_axi_aresetn    (aresetn),
 
-        .s_axi_awaddr     (s_prp_ctrl.awaddr[BRAM_ADDR_WIDTH-1:0]),
+        .s_axi_awaddr     (s_prp_ctrl.awaddr[EXT_ADDR_WIDTH-1:0]),
         .s_axi_awlen      (s_prp_ctrl.awlen),
         .s_axi_awsize     (s_prp_ctrl.awsize),
         .s_axi_awburst    (s_prp_ctrl.awburst),
@@ -85,7 +86,7 @@ module nvme_prp_ctrl #(
         .s_axi_bvalid     (s_prp_ctrl.bvalid),
         .s_axi_bready     (s_prp_ctrl.bready),
 
-        .s_axi_araddr     (s_prp_ctrl.araddr[BRAM_ADDR_WIDTH-1:0]),
+        .s_axi_araddr     (s_prp_ctrl.araddr[EXT_ADDR_WIDTH-1:0]),
         .s_axi_arlen      (s_prp_ctrl.arlen),
         .s_axi_arsize     (s_prp_ctrl.arsize),
         .s_axi_arburst    (s_prp_ctrl.arburst),
@@ -111,14 +112,30 @@ module nvme_prp_ctrl #(
     );
 
     // ================================================================
-    // Byte address → entry index conversion
-    // byte_addr >> 3 = entry index (64-bit = 8 bytes per entry)
+    // Address remapping: external 4KB page → internal compact BRAM
+    //
+    // External byte addr [21:0]: {dev_id[3:0], sq_tail[5:0], page_offset[11:0]}
+    // Internal entry idx [14:0]: {dev_id[3:0], sq_tail[5:0], prp_entry[4:0]}
+    //
+    // prp_entry = page_offset[PRP_ADDR_BITS+2 : 3]  (skip byte offset)
     // ================================================================
-    assign b_addr = bram_addr_a[BRAM_ADDR_WIDTH-1 : BRAM_BYTE_BITS];
+    assign b_addr = {bram_addr_a[EXT_ADDR_WIDTH-1 : EXT_PAGE_BITS],
+                     bram_addr_a[PRP_ADDR_BITS+BRAM_BYTE_BITS-1 : BRAM_BYTE_BITS]};
 
     // ================================================================
-    // Read data: direct connection (64-bit AXI ↔ 64-bit BRAM)
+    // Read data: output register for 2-cycle total latency
+    //   Cycle 1: ram_sdp_nc registered output (inside URAM)
+    //   Cycle 2: fabric register (below) → AXI BRAM controller
     // ================================================================
+    logic [63:0] b_data_out_raw;
+
+    always_ff @(posedge aclk) begin
+        if (!aresetn)
+            b_data_out <= '0;
+        else
+            b_data_out <= b_data_out_raw;
+    end
+
     assign bram_rddata_wire = b_data_out;
 
     // ================================================================
@@ -131,9 +148,9 @@ module nvme_prp_ctrl #(
     assign s_prp.ready = 1'b1;
 
     // ================================================================
-    // Dual-port BRAM (2-cycle read latency)
+    // Dual-port BRAM (1-cycle read latency + external reg = 2 total)
     // ================================================================
-    ram_sdp_c #(
+    ram_sdp_nc #(
         .ADDR_BITS (ADDR_BITS),
         .DATA_BITS (64)
     ) inst_prp_bram (
@@ -144,24 +161,24 @@ module nvme_prp_ctrl #(
         .a_data_in  (a_data_in),
         .b_en       (bram_en_a),
         .b_addr     (b_addr),
-        .b_data_out (b_data_out)
+        .b_data_out (b_data_out_raw)
     );
 
     // ================================================================
     // ILA Debug
     // ================================================================
-`define EN_ILA_NVME_PRP_CTRL
+// `define EN_ILA_NVME_PRP_CTRL
 `ifdef EN_ILA_NVME_PRP_CTRL
     ila_nvme_prp_ctrl inst_ila_nvme_prp_ctrl (
         .clk    (aclk),
         .probe0 (s_prp.valid),                          // 1
         .probe1 (s_prp.ready),                          // 1
-        .probe2 (s_prp.data.addr),                      // NVME_QUEUE_BITS+PRP_ADDR_BITS+N_NVME_BITS (19)
+        .probe2 (s_prp.data.addr),                      // NVME_QUEUE_BITS+PRP_ADDR_BITS+N_NVME_BITS (15)
         .probe3 (s_prp.data.data[31:0]),                // 32
         .probe4 (bram_en_a),                            // 1
-        .probe5 (b_addr),                               // ADDR_BITS (19)
+        .probe5 (b_addr),                               // ADDR_BITS (15)
         .probe6 (a_en),                                 // 1
-        .probe7 (a_addr)                                // ADDR_BITS (19)
+        .probe7 (a_addr)                                // ADDR_BITS (15)
     );
 `endif
 

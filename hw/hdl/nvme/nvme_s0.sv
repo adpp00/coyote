@@ -104,7 +104,7 @@ module nvme_s0 (
     // ================================================================
     // ILA Debug
     // ================================================================
-`define EN_ILA_NVME_S0
+// `define EN_ILA_NVME_S0
 `ifdef EN_ILA_NVME_S0
     ila_nvme_s0 inst_ila_nvme_s0 (
         .clk    (aclk),

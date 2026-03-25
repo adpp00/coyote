@@ -198,7 +198,7 @@ module nvme_info_table #(
     // ================================================================
     // ILA Debug
     // ================================================================
-`define EN_ILA_NVME_INFO_TABLE
+// `define EN_ILA_NVME_INFO_TABLE
 `ifdef EN_ILA_NVME_INFO_TABLE
     ila_nvme_info_table inst_ila_nvme_info_table (
         .clk    (aclk),

@@ -1282,4 +1282,10 @@ int32_t cThread::isNvmeRegistered(const char* bdf, uint32_t nsid) {
     return (int32_t)req.dev_id;
 }
 
+void cThread::nvmeDebugDump(uint32_t dev_id) {
+    if (ioctl(fd, IOCTL_NVME_DEBUG_DUMP, dev_id)) {
+        std::cerr << "WARNING: IOCTL_NVME_DEBUG_DUMP failed" << std::endl;
+    }
+}
+
 }

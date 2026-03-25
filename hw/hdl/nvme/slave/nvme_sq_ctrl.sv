@@ -104,23 +104,25 @@ module nvme_sq_ctrl #(
 
     // ------------------------------------------------------------
     // Register b_addr to align CID with b_data_out.
-    //   ram_sdp_c has 2-cycle read latency → need 2-stage delay.
+    //   ram_sdp_nc (1-cycle) + external reg (1-cycle) = 2-cycle total
     // ------------------------------------------------------------
     logic [ADDR_BITS-1:0] b_addr_q1;
     always_ff @(posedge aclk) begin
         if (!aresetn) begin
             b_addr_q1 <= '0;
             b_addr_q  <= '0;
-        end else if (bram_en_a) begin
+        end else begin
             b_addr_q1 <= b_addr;
             b_addr_q  <= b_addr_q1;
         end
     end
 
     // ------------------------------------------------------------
-    // SQ BRAM (200-bit stored format, 2-cycle read latency)
+    // SQ BRAM (1-cycle read latency + external reg = 2 total)
     // ------------------------------------------------------------
-    ram_sdp_c #(
+    logic [199:0] b_data_out_raw;
+
+    ram_sdp_nc #(
         .ADDR_BITS (ADDR_BITS),
         .DATA_BITS (200)
     ) inst_sq_bram (
@@ -131,8 +133,15 @@ module nvme_sq_ctrl #(
         .a_data_in  (a_data_in),
         .b_en       (bram_en_a),
         .b_addr     (b_addr),
-        .b_data_out (b_data_out)
+        .b_data_out (b_data_out_raw)
     );
+
+    always_ff @(posedge aclk) begin
+        if (!aresetn)
+            b_data_out <= '0;
+        else
+            b_data_out <= b_data_out_raw;
+    end
 
     // ------------------------------------------------------------
     // Ingress: cmd_s2 -> BRAM write
@@ -228,10 +237,11 @@ module nvme_sq_ctrl #(
     // ================================================================
     // ILA Debug
     // ================================================================
-`define EN_ILA_NVME_SQ_CTRL
+// `define EN_ILA_NVME_SQ_CTRL
 `ifdef EN_ILA_NVME_SQ_CTRL
     ila_nvme_sq_ctrl inst_ila_nvme_sq_ctrl (
         .clk    (aclk),
+        // -- Ingress (FPGA writes SQE to BRAM) --
         .probe0 (s_sqe.valid),                          // 1
         .probe1 (s_sqe.ready),                          // 1
         .probe2 (s_sqe.data.dev_id),                    // N_NVME_BITS (4)
@@ -241,7 +251,14 @@ module nvme_sq_ctrl #(
         .probe6 (a_en),                                 // 1
         .probe7 (b_addr),                               // ADDR_BITS (10)
         .probe8 (b_addr_q),                             // ADDR_BITS (10)
-        .probe9 (sq_entry_wire[31:0])                   // 32
+        // -- Egress: SQE fields SSD reads --
+        .probe9 (sq_entry_wire[31:0]),                  // 32  DW0: {CID[31:16], 8'h0, opcode[7:0]}
+        .probe10(sq_entry_wire[63:32]),                 // 32  DW1: NSID
+        .probe11(sq_entry_wire[32*6+31:32*6]),          // 32  DW6: PRP1[31:0]
+        .probe12(sq_entry_wire[32*7+31:32*7]),          // 32  DW7: PRP1[63:32]
+        .probe13(sq_entry_wire[32*10+31:32*10]),        // 32  DW10: SLBA[31:0]
+        .probe14(sq_entry_wire[32*11+31:32*11]),        // 32  DW11: SLBA[63:32]
+        .probe15(sq_entry_wire[32*12+31:32*12])         // 32  DW12: {16'h0, NLBA[15:0]}
     );
 `endif
 

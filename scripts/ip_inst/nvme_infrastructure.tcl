@@ -7,16 +7,19 @@
 # ============================================================================
 
 # PRP BRAM controller — 64-bit data, single port, AXI4, 2-cycle BRAM latency
+# MEM_DEPTH=131072: 1MB address space / 8B = 131072 (256KB × 4 devices)
 create_ip -name axi_bram_ctrl -vendor xilinx.com -library ip -version 4.1 -module_name prp_axi_bram_ctrl
-set_property -dict [list CONFIG.DATA_WIDTH {64} CONFIG.SINGLE_PORT_BRAM {1} CONFIG.PROTOCOL {AXI4} CONFIG.READ_LATENCY {2} ] [get_ips prp_axi_bram_ctrl]
+set_property -dict [list CONFIG.DATA_WIDTH {64} CONFIG.SINGLE_PORT_BRAM {1} CONFIG.PROTOCOL {AXI4} CONFIG.READ_LATENCY {2} CONFIG.MEM_DEPTH {131072} ] [get_ips prp_axi_bram_ctrl]
 
 # SQ BRAM controller — 512-bit data, single port, AXI4, 2-cycle BRAM latency
+# MEM_DEPTH=1024: 64 entries × 16 devices = 1024, covers 64KB address space
 create_ip -name axi_bram_ctrl -vendor xilinx.com -library ip -version 4.1 -module_name sq_axi_bram_ctrl
-set_property -dict [list CONFIG.DATA_WIDTH {512} CONFIG.SINGLE_PORT_BRAM {1} CONFIG.PROTOCOL {AXI4} CONFIG.READ_LATENCY {2} ] [get_ips sq_axi_bram_ctrl]
+set_property -dict [list CONFIG.DATA_WIDTH {512} CONFIG.SINGLE_PORT_BRAM {1} CONFIG.PROTOCOL {AXI4} CONFIG.READ_LATENCY {2} CONFIG.MEM_DEPTH {1024} ] [get_ips sq_axi_bram_ctrl]
 
 # CQ BRAM controller — 128-bit data, single port, AXI4
+# MEM_DEPTH=4096: 256 slots × 16 devices = 4096, covers 64KB address space
 create_ip -name axi_bram_ctrl -vendor xilinx.com -library ip -version 4.1 -module_name cq_axi_bram_ctrl
-set_property -dict [list CONFIG.DATA_WIDTH {128} CONFIG.SINGLE_PORT_BRAM {1} CONFIG.PROTOCOL {AXI4} ] [get_ips cq_axi_bram_ctrl]
+set_property -dict [list CONFIG.DATA_WIDTH {128} CONFIG.SINGLE_PORT_BRAM {1} CONFIG.PROTOCOL {AXI4} CONFIG.MEM_DEPTH {4096} ] [get_ips cq_axi_bram_ctrl]
 
 # AXI4-Stream Data FIFOs (axis_data_fifo_meta_128/96/32)
 # Already created in common_infrastructure.tcl — reused here
@@ -32,7 +35,7 @@ set_property -dict [list \
     CONFIG.C_EN_STRG_QUAL {1} \
     CONFIG.C_INPUT_PIPE_STAGES {1} \
     CONFIG.ALL_PROBE_SAME_MU_CNT {4} \
-    CONFIG.C_DATA_DEPTH {8192} \
+    CONFIG.C_DATA_DEPTH {1024} \
     CONFIG.C_PROBE0_WIDTH {1} \
     CONFIG.C_PROBE1_WIDTH {1} \
     CONFIG.C_PROBE2_WIDTH {4} \
@@ -76,7 +79,7 @@ set_property -dict [list \
     CONFIG.C_EN_STRG_QUAL {1} \
     CONFIG.C_INPUT_PIPE_STAGES {1} \
     CONFIG.ALL_PROBE_SAME_MU_CNT {4} \
-    CONFIG.C_DATA_DEPTH {8192} \
+    CONFIG.C_DATA_DEPTH {1024} \
     CONFIG.C_PROBE0_WIDTH {1} \
     CONFIG.C_PROBE1_WIDTH {1} \
     CONFIG.C_PROBE2_WIDTH {1} \
@@ -95,7 +98,7 @@ set_property -dict [list \
     CONFIG.C_EN_STRG_QUAL {1} \
     CONFIG.C_INPUT_PIPE_STAGES {1} \
     CONFIG.ALL_PROBE_SAME_MU_CNT {4} \
-    CONFIG.C_DATA_DEPTH {8192} \
+    CONFIG.C_DATA_DEPTH {1024} \
     CONFIG.C_PROBE0_WIDTH {1} \
     CONFIG.C_PROBE1_WIDTH {1} \
     CONFIG.C_PROBE2_WIDTH {1} \
@@ -122,7 +125,7 @@ set_property -dict [list \
     CONFIG.C_EN_STRG_QUAL {1} \
     CONFIG.C_INPUT_PIPE_STAGES {1} \
     CONFIG.ALL_PROBE_SAME_MU_CNT {4} \
-    CONFIG.C_DATA_DEPTH {8192} \
+    CONFIG.C_DATA_DEPTH {1024} \
     CONFIG.C_PROBE0_WIDTH {1} \
     CONFIG.C_PROBE1_WIDTH {1} \
     CONFIG.C_PROBE2_WIDTH {1} \
@@ -145,7 +148,7 @@ set_property -dict [list \
     CONFIG.C_EN_STRG_QUAL {1} \
     CONFIG.C_INPUT_PIPE_STAGES {1} \
     CONFIG.ALL_PROBE_SAME_MU_CNT {4} \
-    CONFIG.C_DATA_DEPTH {8192} \
+    CONFIG.C_DATA_DEPTH {1024} \
     CONFIG.C_PROBE0_WIDTH {1} \
     CONFIG.C_PROBE1_WIDTH {1} \
     CONFIG.C_PROBE2_WIDTH {4} \
@@ -179,7 +182,7 @@ set_property -dict [list \
     CONFIG.C_EN_STRG_QUAL {1} \
     CONFIG.C_INPUT_PIPE_STAGES {1} \
     CONFIG.ALL_PROBE_SAME_MU_CNT {4} \
-    CONFIG.C_DATA_DEPTH {8192} \
+    CONFIG.C_DATA_DEPTH {1024} \
     CONFIG.C_PROBE0_WIDTH {1} \
     CONFIG.C_PROBE1_WIDTH {1} \
     CONFIG.C_PROBE2_WIDTH {1} \
@@ -205,7 +208,7 @@ set_property -dict [list \
     CONFIG.C_EN_STRG_QUAL {1} \
     CONFIG.C_INPUT_PIPE_STAGES {1} \
     CONFIG.ALL_PROBE_SAME_MU_CNT {4} \
-    CONFIG.C_DATA_DEPTH {8192} \
+    CONFIG.C_DATA_DEPTH {1024} \
     CONFIG.C_PROBE0_WIDTH {1} \
     CONFIG.C_PROBE1_WIDTH {1} \
     CONFIG.C_PROBE2_WIDTH {64} \
@@ -225,14 +228,14 @@ set_property -dict [list \
     CONFIG.C_PROBE16_WIDTH {64} \
 ] [get_ips ila_nvme_cnfg_slave]
 
-# --- ila_nvme_sq_ctrl: 10 probes ---
+# --- ila_nvme_sq_ctrl: 16 probes ---
 create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_nvme_sq_ctrl
 set_property -dict [list \
-    CONFIG.C_NUM_OF_PROBES {10} \
+    CONFIG.C_NUM_OF_PROBES {16} \
     CONFIG.C_EN_STRG_QUAL {1} \
     CONFIG.C_INPUT_PIPE_STAGES {1} \
     CONFIG.ALL_PROBE_SAME_MU_CNT {4} \
-    CONFIG.C_DATA_DEPTH {8192} \
+    CONFIG.C_DATA_DEPTH {1024} \
     CONFIG.C_PROBE0_WIDTH {1} \
     CONFIG.C_PROBE1_WIDTH {1} \
     CONFIG.C_PROBE2_WIDTH {4} \
@@ -243,6 +246,12 @@ set_property -dict [list \
     CONFIG.C_PROBE7_WIDTH {10} \
     CONFIG.C_PROBE8_WIDTH {10} \
     CONFIG.C_PROBE9_WIDTH {32} \
+    CONFIG.C_PROBE10_WIDTH {32} \
+    CONFIG.C_PROBE11_WIDTH {32} \
+    CONFIG.C_PROBE12_WIDTH {32} \
+    CONFIG.C_PROBE13_WIDTH {32} \
+    CONFIG.C_PROBE14_WIDTH {32} \
+    CONFIG.C_PROBE15_WIDTH {32} \
 ] [get_ips ila_nvme_sq_ctrl]
 
 # --- ila_nvme_cq_ctrl: 14 probes ---
@@ -252,7 +261,7 @@ set_property -dict [list \
     CONFIG.C_EN_STRG_QUAL {1} \
     CONFIG.C_INPUT_PIPE_STAGES {1} \
     CONFIG.ALL_PROBE_SAME_MU_CNT {4} \
-    CONFIG.C_DATA_DEPTH {8192} \
+    CONFIG.C_DATA_DEPTH {1024} \
     CONFIG.C_PROBE0_WIDTH {1} \
     CONFIG.C_PROBE1_WIDTH {4} \
     CONFIG.C_PROBE2_WIDTH {6} \
@@ -276,15 +285,15 @@ set_property -dict [list \
     CONFIG.C_EN_STRG_QUAL {1} \
     CONFIG.C_INPUT_PIPE_STAGES {1} \
     CONFIG.ALL_PROBE_SAME_MU_CNT {4} \
-    CONFIG.C_DATA_DEPTH {8192} \
+    CONFIG.C_DATA_DEPTH {1024} \
     CONFIG.C_PROBE0_WIDTH {1} \
     CONFIG.C_PROBE1_WIDTH {1} \
-    CONFIG.C_PROBE2_WIDTH {19} \
+    CONFIG.C_PROBE2_WIDTH {15} \
     CONFIG.C_PROBE3_WIDTH {32} \
     CONFIG.C_PROBE4_WIDTH {1} \
-    CONFIG.C_PROBE5_WIDTH {19} \
+    CONFIG.C_PROBE5_WIDTH {15} \
     CONFIG.C_PROBE6_WIDTH {1} \
-    CONFIG.C_PROBE7_WIDTH {19} \
+    CONFIG.C_PROBE7_WIDTH {15} \
 ] [get_ips ila_nvme_prp_ctrl]
 
 # --- ila_nvme_cq_head_tracker: 16 probes ---
@@ -294,7 +303,7 @@ set_property -dict [list \
     CONFIG.C_EN_STRG_QUAL {1} \
     CONFIG.C_INPUT_PIPE_STAGES {1} \
     CONFIG.ALL_PROBE_SAME_MU_CNT {4} \
-    CONFIG.C_DATA_DEPTH {8192} \
+    CONFIG.C_DATA_DEPTH {1024} \
     CONFIG.C_PROBE0_WIDTH {1} \
     CONFIG.C_PROBE1_WIDTH {4} \
     CONFIG.C_PROBE2_WIDTH {3} \
@@ -313,6 +322,32 @@ set_property -dict [list \
     CONFIG.C_PROBE15_WIDTH {64} \
 ] [get_ips ila_nvme_cq_head_tracker]
 
+# --- ila_perf_nvme: 16 probes (user logic bench engine) ---
+create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_perf_nvme
+set_property -dict [list \
+    CONFIG.C_NUM_OF_PROBES {16} \
+    CONFIG.C_EN_STRG_QUAL {1} \
+    CONFIG.C_INPUT_PIPE_STAGES {1} \
+    CONFIG.ALL_PROBE_SAME_MU_CNT {4} \
+    CONFIG.C_DATA_DEPTH {4096} \
+    CONFIG.C_PROBE0_WIDTH {3} \
+    CONFIG.C_PROBE1_WIDTH {2} \
+    CONFIG.C_PROBE2_WIDTH {32} \
+    CONFIG.C_PROBE3_WIDTH {32} \
+    CONFIG.C_PROBE4_WIDTH {1} \
+    CONFIG.C_PROBE5_WIDTH {4} \
+    CONFIG.C_PROBE6_WIDTH {1} \
+    CONFIG.C_PROBE7_WIDTH {1} \
+    CONFIG.C_PROBE8_WIDTH {1} \
+    CONFIG.C_PROBE9_WIDTH {4} \
+    CONFIG.C_PROBE10_WIDTH {32} \
+    CONFIG.C_PROBE11_WIDTH {16} \
+    CONFIG.C_PROBE12_WIDTH {1} \
+    CONFIG.C_PROBE13_WIDTH {16} \
+    CONFIG.C_PROBE14_WIDTH {4} \
+    CONFIG.C_PROBE15_WIDTH {4} \
+] [get_ips ila_perf_nvme]
+
 # --- ila_nvme_sq_doorbell_writer: 10 probes ---
 create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_nvme_sq_doorbell_writer
 set_property -dict [list \
@@ -320,7 +355,7 @@ set_property -dict [list \
     CONFIG.C_EN_STRG_QUAL {1} \
     CONFIG.C_INPUT_PIPE_STAGES {1} \
     CONFIG.ALL_PROBE_SAME_MU_CNT {4} \
-    CONFIG.C_DATA_DEPTH {8192} \
+    CONFIG.C_DATA_DEPTH {1024} \
     CONFIG.C_PROBE0_WIDTH {1} \
     CONFIG.C_PROBE1_WIDTH {1} \
     CONFIG.C_PROBE2_WIDTH {64} \

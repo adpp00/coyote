@@ -196,7 +196,7 @@ module nvme_cq_head_tracker #(
     // ================================================================
     // ILA Debug
     // ================================================================
-`define EN_ILA_NVME_CQ_HEAD_TRACKER
+// `define EN_ILA_NVME_CQ_HEAD_TRACKER
 `ifdef EN_ILA_NVME_CQ_HEAD_TRACKER
     ila_nvme_cq_head_tracker inst_ila_nvme_cq_head_tracker (
         .clk    (aclk),

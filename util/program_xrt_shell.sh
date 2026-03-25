@@ -139,7 +139,7 @@ save_pcie_info() {
         return 1
     fi
 
-    local pcie_cap=$(sudo lspci -s "$ROOT_PORT" -vv 2>/dev/null | grep -oP 'Capabilities: \[\K[0-9a-fA-F]+(?=\] Express)')
+    local pcie_cap=$(sudo lspci -s "$ROOT_PORT" -vv 2>/dev/null | sed -n 's/.*Capabilities: \[\([0-9a-fA-F]*\)\] Express.*/\1/p' | head -1)
     [ -z "$pcie_cap" ] && pcie_cap="58"
     LINK_CTL=$(printf "%X" $((0x$pcie_cap + 0x10)))
 
@@ -168,7 +168,7 @@ pci_hotplug() {
 
     if [ -z "$ROOT_PORT" ] || [ -z "$UPSTREAM_PORT" ] || [ -z "$LINK_CTL" ]; then
         echo -n "  Simple rescan... "
-        sudo sh -c "echo 1 > /sys/bus/pci/devices/0000:${root_bus}:${root_dev}.${root_func}/rescan"
+        sudo sh -c "echo 1 > /sys/bus/pci/rescan" 2>/dev/null || true
         sleep 2
         echo "done."
         return
@@ -183,7 +183,7 @@ pci_hotplug() {
     echo -n "  Removing root port... "
     sudo sh -c "echo 1 > /sys/bus/pci/devices/0000:${root_bus}:${root_dev}.${root_func}/remove" 2>/dev/null || true
     sleep 1
-    sudo sh -c "echo 1 > /sys/bus/pci/devices/0000:${root_bus}:${root_dev}.${root_func}/rescan"
+    sudo sh -c "echo 1 > /sys/bus/pci/rescan"
     sleep 1
     echo "done."
 
@@ -200,14 +200,14 @@ pci_hotplug() {
     echo "done."
 
     echo -n "  Rescanning... "
-    sudo sh -c "echo 1 > /sys/bus/pci/devices/0000:${root_bus}:${root_dev}.${root_func}/rescan"
+    sudo sh -c "echo 1 > /sys/bus/pci/rescan"
     sleep 1
     echo "done."
 
     echo -n "  Final rescan... "
     sudo sh -c "echo 1 > /sys/bus/pci/devices/0000:${root_bus}:${root_dev}.${root_func}/remove" 2>/dev/null || true
     sleep 1
-    sudo sh -c "echo 1 > /sys/bus/pci/devices/0000:${root_bus}:${root_dev}.${root_func}/rescan"
+    sudo sh -c "echo 1 > /sys/bus/pci/rescan"
     sleep 2
     echo "done."
 

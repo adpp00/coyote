@@ -395,6 +395,12 @@ public:
 	 * @return dev_id if registered, -1 if not
 	 */
 	int32_t isNvmeRegistered(const char* bdf, uint32_t nsid = 1);
+
+	/**
+	 * @brief Dump NVMe FPGA BRAM (SQ, PRP) to dmesg for debugging
+	 * @param dev_id NVMe device ID (0..15)
+	 */
+	void nvmeDebugDump(uint32_t dev_id);
 };
 
 }

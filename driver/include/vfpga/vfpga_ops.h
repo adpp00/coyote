@@ -95,4 +95,11 @@ void nvme_cleanup_device(struct nvme_device_state *dev_state,
 /// NVMe manager cleanup
 void nvme_manager_cleanup(struct bus_driver_data *bd);
 
+/// NVMe debug: dump FPGA BRAM contents to dmesg
+void nvme_debug_dump_sq(struct bus_driver_data *bd, uint32_t dev_id, int num_entries);
+void nvme_debug_dump_cq(struct bus_driver_data *bd, uint32_t dev_id, int num_entries);
+void nvme_debug_dump_prp(struct bus_driver_data *bd, uint32_t dev_id, int num_entries);
+void nvme_debug_dump_cnfg(struct bus_driver_data *bd);
+void nvme_debug_dump_all(struct bus_driver_data *bd, uint32_t dev_id);
+
 #endif // _VFPGA_OPS_H_

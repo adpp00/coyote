@@ -837,7 +837,14 @@ module shell_top (
 
 {% endif %}
 {% if cnfg.en_nvme %}
-    axi_stripe (.aclk(aclk), .aresetn(aresetn), .s_axi(axi_direct), .m_axi(axi_ddr_in[N_MEM_CHAN-1]));
+    // NVMe direct HBM: split across 2 HBM ports for ~2x bandwidth
+    axi_direct_2ch_split inst_axi_direct_split (
+        .aclk(aclk),
+        .aresetn(aresetn),
+        .s_axi(axi_direct),
+        .m_axi_0(axi_ddr_in[N_MEM_CHAN-2]),
+        .m_axi_1(axi_ddr_in[N_MEM_CHAN-1])
+    );
 {% endif %}
 {% if cnfg.en_dcard %}
     // ================-----------------------------------------------------------------

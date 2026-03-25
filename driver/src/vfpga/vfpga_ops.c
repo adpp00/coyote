@@ -622,6 +622,17 @@ long vfpga_dev_ioctl(struct file *file, unsigned int command, unsigned long arg)
             break;
         }
 
+        case IOCTL_NVME_DEBUG_DUMP:
+        {
+            if (!device_data->en_nvme) {
+                return -ENODEV;
+            }
+            uint32_t dev_id = (uint32_t)arg;
+            if (dev_id >= MAX_NVME_DEVICES) dev_id = 0;
+            nvme_debug_dump_all(device_data, dev_id);
+            break;
+        }
+
         default:
             dbg_info("vFPGA device %d received unknown IOCTL call %d\n", device->id, command);
             ret_val = 1;

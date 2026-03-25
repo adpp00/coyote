@@ -287,7 +287,7 @@ module nvme_cnfg_slave (
     // ================================================================
     // ILA Debug
     // ================================================================
-`define EN_ILA_NVME_CNFG_SLAVE
+// `define EN_ILA_NVME_CNFG_SLAVE
 `ifdef EN_ILA_NVME_CNFG_SLAVE
     ila_nvme_cnfg_slave inst_ila_nvme_cnfg_slave (
         .clk    (aclk),

@@ -351,6 +351,7 @@ extern bool en_hmm;
 #define IOCTL_NVME_INIT          _IOWR('F', 40, struct nvme_init_ioctl)
 #define IOCTL_NVME_CLOSE         _IOW('F', 41, unsigned long)
 #define IOCTL_NVME_IS_REGISTERED _IOWR('F', 42, struct nvme_init_ioctl)
+#define IOCTL_NVME_DEBUG_DUMP    _IOW('F', 43, unsigned long)  /* arg = dev_id */
 
 // Reconfiguration IOCTL calls; see reconfig_ops.c for more details
 #define IOCTL_ALLOC_HOST_RECONFIG_MEM _IOW('P', 1, unsigned long)

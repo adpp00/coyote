@@ -121,7 +121,7 @@ module nvme_sq_doorbell_writer (
     // ================================================================
     // ILA Debug
     // ================================================================
-`define EN_ILA_NVME_SQ_DB_WRITER
+// `define EN_ILA_NVME_SQ_DB_WRITER
 `ifdef EN_ILA_NVME_SQ_DB_WRITER
     ila_nvme_sq_doorbell_writer inst_ila_nvme_sq_doorbell_writer (
         .clk    (aclk),

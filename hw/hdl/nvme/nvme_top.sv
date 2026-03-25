@@ -15,7 +15,7 @@
 
 `timescale 1ns/1ps
 
-`define EN_ILA_NVME_TOP
+// `define EN_ILA_NVME_TOP
 
 import lynxTypes::*;
 
@@ -201,7 +201,7 @@ module nvme_top (
     // ================================================================
     nvme_prp_ctrl #(
         .NVME_QUEUE_BITS (6),
-        .PRP_ADDR_BITS   (9),
+        .PRP_ADDR_BITS   (5),
         .N_NVME_BITS     (N_NVME_BITS)
     ) inst_nvme_prp_ctrl (
         .aclk       (aclk),

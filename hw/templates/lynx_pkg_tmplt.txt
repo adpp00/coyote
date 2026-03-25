@@ -150,7 +150,7 @@ package lynxTypes;
     parameter integer AXI_DDR_BITS = 512;
     parameter integer AXI_TLB_BITS = 128;
     parameter integer AXI_ID_BITS = 6;
-    parameter integer AXI_BPSS_BAR_BITS = 28;
+    parameter integer AXI_BPSS_BAR_BITS = 34;
 
     // TLB ram
     parameter integer TLB_S_ORDER = {{ cnfg.tlbs_s }};
@@ -201,7 +201,7 @@ package lynxTypes;
     parameter integer STRM_HOST = 1;
     parameter integer STRM_RDMA = 2;
     parameter integer STRM_TCP = 3;
-    parameter integer STRM_NVME = STRM_HOST; // NVMe PRP reads go through host memory path
+    parameter integer STRM_NVME = 3; // Dedicated NVMe stream — bypasses strm check in TLB (wildcard)
 
     // Queue depth
     parameter integer QUEUE_DEPTH = 8;
@@ -775,13 +775,13 @@ package lynxTypes;
     // NVMe
     // ----------------------------------------------------------------
 
-    parameter integer N_NVME_BITS = 4;
+    parameter integer N_NVME_BITS = 2;
     parameter integer NVME_QUEUE_BITS = 6;
-    parameter integer PRP_ADDR_BITS = 9;
+    parameter integer PRP_ADDR_BITS = 5;
     parameter integer DEV_ID_BITS = 4;
     parameter integer NSID_BITS = 4;
     parameter integer LBAF_BITS = 4;
-    parameter integer N_NVME_MAX = 16;
+    parameter integer N_NVME_MAX = 4;
     parameter integer REGION_ID_BITS = $clog2(N_REGIONS) > 0 ? $clog2(N_REGIONS) : 1;
     parameter integer NVME_USER_CMD_BITS = DEV_ID_BITS + 1 + NSID_BITS + ADDR_BITS + LEN_BITS + ADDR_BITS;
 

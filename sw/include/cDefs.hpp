@@ -120,6 +120,7 @@ namespace coyote {
 #define IOCTL_NVME_INIT          _IOWR('F', 40, struct nvme_init_ioctl)
 #define IOCTL_NVME_CLOSE         _IOW('F', 41, unsigned long)
 #define IOCTL_NVME_IS_REGISTERED _IOWR('F', 42, struct nvme_init_ioctl)
+#define IOCTL_NVME_DEBUG_DUMP    _IOW('F', 43, unsigned long)
 
 ///////////////////////////////////////////////////
 //              CONTROL REGISTERS               //

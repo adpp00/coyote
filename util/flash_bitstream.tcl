@@ -1,30 +1,17 @@
 # flash_bitstream.tcl
 # Usage:
-#   vivado -mode batch -source flash_bitstream.tcl -tclargs <serial> <device> <bitstream> [ltx]
+#   vivado -mode batch -source flash_bitstream.tcl -tclargs <bitstream> [ltx]
 #
-# Example:
-#   vivado -mode batch -source flash_bitstream.tcl -tclargs XFL1U51TW40FA xcu280_u55c_0 ./cyt_top.bit
-#   vivado -mode batch -source flash_bitstream.tcl -tclargs XFL1U51TW40FA xcu280_u55c_0 ./cyt_top.bit ./cyt_top.ltx
+# Auto-detects JTAG target and device. Single Vivado session.
 
-if { $argc < 3 } {
-    puts "Usage: vivado -mode batch -source flash_bitstream.tcl -tclargs <serial> <device> <bitstream> \[ltx\]"
+if { $argc < 1 } {
+    puts "Usage: vivado -mode batch -source flash_bitstream.tcl -tclargs <bitstream> \[ltx\]"
     exit 1
 }
 
-set serial_number  [lindex $argv 0]
-set device_name    [lindex $argv 1]
-set bitstream_path [lindex $argv 2]
+set bitstream_path [lindex $argv 0]
 set ltx_path       ""
-if { $argc >= 4 } { set ltx_path [lindex $argv 3] }
-
-set server_addr "localhost"
-
-puts "============================================"
-puts "Serial    : $serial_number"
-puts "Device    : $device_name"
-puts "Bitstream : $bitstream_path"
-if { $ltx_path ne "" } { puts "LTX       : $ltx_path" }
-puts "============================================"
+if { $argc >= 2 } { set ltx_path [lindex $argv 1] }
 
 # Validate files
 if { ![file exists $bitstream_path] } {
@@ -38,30 +25,35 @@ if { $ltx_path ne "" && ![file exists $ltx_path] } {
 
 # Connect
 open_hw_manager
-connect_hw_server -url ${server_addr}:3121 -allow_non_jtag
+connect_hw_server -url localhost:3121 -allow_non_jtag
 
-# Open target
-set targets [get_hw_targets */xilinx_tcf/Xilinx/${serial_number}*]
+# Auto-detect target
+set targets [get_hw_targets *xilinx_tcf/Xilinx/*]
 if { [llength $targets] == 0 } {
-    puts "ERROR: Target not found: $serial_number"
-    puts "Available: [get_hw_targets]"
+    puts "ERROR: No JTAG target found"
     exit 1
 }
-current_hw_target [lindex $targets 0]
+set target [lindex $targets 0]
+set serial [lindex [split $target /] end]
+puts "JTAG target: $serial"
+
+current_hw_target $target
 set_property PARAM.FREQUENCY 15000000 [current_hw_target]
 open_hw_target
 
-# Get device
-set devices [get_hw_devices ${device_name}*]
+# Auto-detect device
+set devices [get_hw_devices]
 if { [llength $devices] == 0 } {
-    puts "ERROR: Device not found: $device_name"
-    puts "Available: [get_hw_devices]"
+    puts "ERROR: No device found"
     exit 1
 }
 set device [lindex $devices 0]
+puts "Device: $device"
+
 current_hw_device $device
 
 # Program
+puts "Programming: $bitstream_path"
 set_property PROGRAM.FILE $bitstream_path $device
 if { $ltx_path ne "" } {
     set_property PROBES.FILE $ltx_path $device
@@ -69,7 +61,7 @@ if { $ltx_path ne "" } {
 
 program_hw_devices $device
 
-# Refresh with probes
+# Refresh
 if { $ltx_path ne "" } {
     refresh_hw_device -update_hw_probes true $device
 } else {
