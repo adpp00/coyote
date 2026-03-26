@@ -6,10 +6,10 @@
 # AXI BRAM Controllers
 # ============================================================================
 
-# PRP BRAM controller — 64-bit data, single port, AXI4, 2-cycle BRAM latency
-# MEM_DEPTH=131072: 1MB address space / 8B = 131072 (256KB × 4 devices)
+# PRP BRAM controller — 64-bit data, single port, AXI4, 1-cycle BRAM latency
+# MEM_DEPTH=131072: 4 devices × 64 queues × 512 entries = 131072 (1MB address space)
 create_ip -name axi_bram_ctrl -vendor xilinx.com -library ip -version 4.1 -module_name prp_axi_bram_ctrl
-set_property -dict [list CONFIG.DATA_WIDTH {64} CONFIG.SINGLE_PORT_BRAM {1} CONFIG.PROTOCOL {AXI4} CONFIG.READ_LATENCY {2} CONFIG.MEM_DEPTH {131072} ] [get_ips prp_axi_bram_ctrl]
+set_property -dict [list CONFIG.DATA_WIDTH {64} CONFIG.SINGLE_PORT_BRAM {1} CONFIG.PROTOCOL {AXI4} CONFIG.READ_LATENCY {1} CONFIG.MEM_DEPTH {131072} ] [get_ips prp_axi_bram_ctrl]
 
 # SQ BRAM controller — 512-bit data, single port, AXI4, 2-cycle BRAM latency
 # MEM_DEPTH=1024: 64 entries × 16 devices = 1024, covers 64KB address space

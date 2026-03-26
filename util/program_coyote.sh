@@ -278,6 +278,14 @@ done
 # Validation
 #===============================================================================
 
+# Default driver params from environment if not specified
+if [ -z "$DRIVER_PARAMS" ] && [ -n "$DRIVER" ]; then
+    if [ -n "$DEVICE_1_IP_ADDRESS_HEX_0" ] && [ -n "$DEVICE_1_MAC_ADDRESS_0" ]; then
+        DRIVER_PARAMS="ip_addr=$DEVICE_1_IP_ADDRESS_HEX_0 mac_addr=$DEVICE_1_MAC_ADDRESS_0"
+        info "  Using env: ip_addr=$DEVICE_1_IP_ADDRESS_HEX_0 mac_addr=$DEVICE_1_MAC_ADDRESS_0"
+    fi
+fi
+
 [ -z "$BITSTREAM" ] && error "Bitstream required. Use -h for help."
 [ ! -f "$BITSTREAM" ] && error "Bitstream not found: $BITSTREAM"
 [ -n "$LTX" ] && [ ! -f "$LTX" ] && error "LTX not found: $LTX"

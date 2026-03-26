@@ -1,18 +1,18 @@
 /**
- * perf_nvme_axi_ctrl_parser
- * 
+ * perf_nvme_axi_ctrl_parser (multi-device)
+ *
  * Register Map:
  *   0 (W1S) : CTRL            - bit0=READ, bit1=WRITE
- *   1 (RO)  : SENT            - Number of REQs sent
- *   2 (RO)  : DONE            - Number of CPLs received
+ *   1 (RO)  : SENT            - Total REQs sent (all devices)
+ *   2 (RO)  : DONE            - Total CPLs received (all devices)
  *   3 (RO)  : TIMER           - Clock cycles
- *   4 (WR)  : VADDR           - Card memory base address
- *   5 (WR)  : CHUNK_SIZE      - Bytes per NVMe command
- *   6 (WR)  : N_REPS          - Number of commands
- *   7 (WR)  : LBA             - Starting LBA
- *   8 (WR)  : DEV_ID          - NVMe device ID
- *   9 (WR)  : NSID            - Namespace ID
- *  10 (WR)  : MAX_OUTSTANDING - Max concurrent commands
+ *   4 (WR)  : VADDR           - Card memory base address (shared)
+ *   5 (WR)  : CHUNK_SIZE      - Bytes per NVMe command (shared)
+ *   6 (WR)  : N_REPS          - Number of commands PER DEVICE
+ *   7 (WR)  : LBA             - Starting byte offset (shared)
+ *   8 (WR)  : DEV_MASK        - Bitmask of active devices (e.g., 0x000F)
+ *   9 (WR)  : NSID            - Namespace ID (shared)
+ *  10 (WR)  : MAX_OUTSTANDING - Max concurrent commands PER DEVICE
  *  11 (RO)  : ERROR           - Last error code
  */
 
@@ -21,7 +21,7 @@ import lynxTypes::*;
 module perf_nvme_axi_ctrl_parser (
     input  logic                        aclk,
     input  logic                        aresetn,
-    
+
     AXI4L.s                             axi_ctrl,
 
     // Outputs to benchmark logic (from SW)
@@ -30,10 +30,10 @@ module perf_nvme_axi_ctrl_parser (
     output logic [31:0]                 bench_chunk_size,
     output logic [31:0]                 bench_n_reps,
     output logic [63:0]                 bench_lba,
-    output logic [63:0]                 bench_dev_id,
+    output logic [15:0]                 bench_dev_mask,
     output logic [63:0]                 bench_nsid,
     output logic [31:0]                 bench_max_outstanding,
-    
+
     // Inputs from benchmark logic (to SW)
     input  logic [31:0]                 bench_sent,
     input  logic [31:0]                 bench_done,
@@ -79,7 +79,7 @@ localparam integer BENCH_VADDR_REG           = 4;
 localparam integer BENCH_CHUNK_SIZE_REG      = 5;
 localparam integer BENCH_N_REPS_REG          = 6;
 localparam integer BENCH_LBA_REG             = 7;
-localparam integer BENCH_DEV_ID_REG          = 8;
+localparam integer BENCH_DEV_MASK_REG        = 8;
 localparam integer BENCH_NSID_REG            = 9;
 localparam integer BENCH_MAX_OUTSTANDING_REG = 10;
 localparam integer BENCH_ERROR_REG           = 11;
@@ -99,52 +99,17 @@ always_ff @(posedge aclk) begin
 
         if (ctrl_reg_wren) begin
             case (axi_awaddr[ADDR_LSB+:ADDR_MSB])
-                BENCH_CTRL_REG: begin
-                    for (int i = 0; i < (AXIL_DATA_BITS/8); i++) begin
-                        if (axi_ctrl.wstrb[i])
-                            ctrl_reg[BENCH_CTRL_REG][(i*8)+:8] <= axi_ctrl.wdata[(i*8)+:8];
-                    end
-                end
-                BENCH_VADDR_REG: begin
-                    for (int i = 0; i < (AXIL_DATA_BITS/8); i++) begin
-                        if (axi_ctrl.wstrb[i])
-                            ctrl_reg[BENCH_VADDR_REG][(i*8)+:8] <= axi_ctrl.wdata[(i*8)+:8];
-                    end
-                end
-                BENCH_CHUNK_SIZE_REG: begin
-                    for (int i = 0; i < (AXIL_DATA_BITS/8); i++) begin
-                        if (axi_ctrl.wstrb[i])
-                            ctrl_reg[BENCH_CHUNK_SIZE_REG][(i*8)+:8] <= axi_ctrl.wdata[(i*8)+:8];
-                    end
-                end
-                BENCH_N_REPS_REG: begin
-                    for (int i = 0; i < (AXIL_DATA_BITS/8); i++) begin
-                        if (axi_ctrl.wstrb[i])
-                            ctrl_reg[BENCH_N_REPS_REG][(i*8)+:8] <= axi_ctrl.wdata[(i*8)+:8];
-                    end
-                end
-                BENCH_LBA_REG: begin
-                    for (int i = 0; i < (AXIL_DATA_BITS/8); i++) begin
-                        if (axi_ctrl.wstrb[i])
-                            ctrl_reg[BENCH_LBA_REG][(i*8)+:8] <= axi_ctrl.wdata[(i*8)+:8];
-                    end
-                end
-                BENCH_DEV_ID_REG: begin
-                    for (int i = 0; i < (AXIL_DATA_BITS/8); i++) begin
-                        if (axi_ctrl.wstrb[i])
-                            ctrl_reg[BENCH_DEV_ID_REG][(i*8)+:8] <= axi_ctrl.wdata[(i*8)+:8];
-                    end
-                end
-                BENCH_NSID_REG: begin
-                    for (int i = 0; i < (AXIL_DATA_BITS/8); i++) begin
-                        if (axi_ctrl.wstrb[i])
-                            ctrl_reg[BENCH_NSID_REG][(i*8)+:8] <= axi_ctrl.wdata[(i*8)+:8];
-                    end
-                end
+                BENCH_CTRL_REG,
+                BENCH_VADDR_REG,
+                BENCH_CHUNK_SIZE_REG,
+                BENCH_N_REPS_REG,
+                BENCH_LBA_REG,
+                BENCH_DEV_MASK_REG,
+                BENCH_NSID_REG,
                 BENCH_MAX_OUTSTANDING_REG: begin
                     for (int i = 0; i < (AXIL_DATA_BITS/8); i++) begin
                         if (axi_ctrl.wstrb[i])
-                            ctrl_reg[BENCH_MAX_OUTSTANDING_REG][(i*8)+:8] <= axi_ctrl.wdata[(i*8)+:8];
+                            ctrl_reg[axi_awaddr[ADDR_LSB+:ADDR_MSB]][(i*8)+:8] <= axi_ctrl.wdata[(i*8)+:8];
                     end
                 end
                 default: ;
@@ -190,7 +155,7 @@ always_comb begin
     bench_chunk_size      = ctrl_reg[BENCH_CHUNK_SIZE_REG][31:0];
     bench_n_reps          = ctrl_reg[BENCH_N_REPS_REG][31:0];
     bench_lba             = ctrl_reg[BENCH_LBA_REG];
-    bench_dev_id          = ctrl_reg[BENCH_DEV_ID_REG];
+    bench_dev_mask        = ctrl_reg[BENCH_DEV_MASK_REG][15:0];
     bench_nsid            = ctrl_reg[BENCH_NSID_REG];
     bench_max_outstanding = ctrl_reg[BENCH_MAX_OUTSTANDING_REG][31:0];
 end

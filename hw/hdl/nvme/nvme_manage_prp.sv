@@ -7,7 +7,9 @@ import lynxTypes::*;
 // Handles 4KB, 8KB, and multi-page transfers
 // FSM separates each handshake stage to break combinatorial loops
 // ------------------------------------------------------------
-module nvme_manage_prp (
+module nvme_manage_prp #(
+    parameter integer PRP_ADDR_BITS = lynxTypes::PRP_ADDR_BITS
+)(
     input  logic        aclk,
     input  logic        aresetn,
 

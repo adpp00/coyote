@@ -13,6 +13,7 @@ set(EN_STRM 1)
 set(EN_MEM 1)
 set(HBM_SPLIT 1)
 set(EN_NVME 1)
+set(BUILD_OPT 1)
 
 set(N_REGIONS 1)
 

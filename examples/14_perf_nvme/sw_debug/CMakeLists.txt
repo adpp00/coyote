@@ -9,13 +9,9 @@ message("*** Coyote Example 14: NVMe Bandwidth Test [Software] ***")
 
 set(TARGET_DIR "${CMAKE_SOURCE_DIR}/src/")
 set(EXEC test)
+add_executable(${EXEC} ${TARGET_DIR}/main.cpp)
+target_link_libraries(${EXEC} PUBLIC Coyote)
+target_link_directories(${EXEC} PUBLIC /usr/local/lib)
 
-option(DEBUG "Build NVMe BRAM dump tool instead of main test" OFF)
-
-if(DEBUG)
-    add_executable(${EXEC} ${TARGET_DIR}/nvme_bram_dump.cpp)
-else()
-    add_executable(${EXEC} ${TARGET_DIR}/main.cpp)
-    target_link_libraries(${EXEC} PUBLIC Coyote)
-    target_link_directories(${EXEC} PUBLIC /usr/local/lib)
-endif()
+# NVMe BRAM dump tool (standalone, no Coyote lib needed)
+add_executable(nvme_bram_dump ${TARGET_DIR}/nvme_bram_dump.cpp)

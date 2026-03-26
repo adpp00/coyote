@@ -46,10 +46,7 @@ nvme_axi_ctrl_parser inst_axi_ctrl_parser (
     .nvme_vaddr(nvme_vaddr),
     .nvme_write(nvme_write),
     .nvme_done(nvme_done_C),
-    .nvme_error(nvme_error_C),
-    .cpl_dev_id(cpl_dev_id_C),
-    .cpl_status(cpl_status_C),
-    .cpl_phase(cpl_phase_C)
+    .nvme_error(nvme_error_C)
 );
 
 // ----------------------------------------------------------------
@@ -60,8 +57,6 @@ nvme_user_req_t     nvme_req_C, nvme_req_N;
 
 // CQE tracking
 logic [N_NVME_BITS-1:0] cpl_dev_id_C, cpl_dev_id_N;
-logic [14:0]            cpl_status_C, cpl_status_N;
-logic                   cpl_phase_C, cpl_phase_N;
 
 // ----------------------------------------------------------------
 // FSM combinational logic
@@ -74,8 +69,6 @@ always_comb begin
     nvme_error_N     = nvme_error_C;
     nvme_done_N      = nvme_done_C;
     cpl_dev_id_N     = cpl_dev_id_C;
-    cpl_status_N     = cpl_status_C;
-    cpl_phase_N      = cpl_phase_C;
 
     // NVMe request interface
     m_nvme_cmd_req.valid = nvme_req_valid_C;
@@ -143,8 +136,6 @@ always_comb begin
         ST_WAIT_NVME_CPL: begin
             if (s_nvme_cpl.valid) begin
                 cpl_dev_id_N = s_nvme_cpl.data.dev_id;
-                cpl_status_N = s_nvme_cpl.data.status;
-                cpl_phase_N  = s_nvme_cpl.data.phase;
                 nvme_done_N  = 1'b1;
                 state_N      = ST_DONE;
             end
@@ -174,8 +165,6 @@ always_ff @(posedge aclk) begin
         nvme_error_C     <= 16'd0;
         nvme_done_C      <= 1'b0;
         cpl_dev_id_C     <= '0;
-        cpl_status_C     <= '0;
-        cpl_phase_C      <= 1'b0;
     end
     else begin
         state_C          <= state_N;
@@ -184,8 +173,6 @@ always_ff @(posedge aclk) begin
         nvme_error_C     <= nvme_error_N;
         nvme_done_C      <= nvme_done_N;
         cpl_dev_id_C     <= cpl_dev_id_N;
-        cpl_status_C     <= cpl_status_N;
-        cpl_phase_C      <= cpl_phase_N;
     end
 end
 
@@ -215,7 +202,6 @@ end
 // ----------------------------------------------------------------
 // Debug ILA
 // ----------------------------------------------------------------
-`define EN_ILA_NVME
 `ifdef EN_ILA_NVME
 ila_nvme_user inst_ila_nvme_user (
     .clk    (aclk),

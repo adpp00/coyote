@@ -21,7 +21,6 @@ import lynxTypes::*;
  * 0x28 (WR)  : Transfer Size (bytes)
  * 0x30 (WR)  : Virtual Address
  * 0x38 (WR)  : Write/Read (1 = write, 0 = read)
- * 0x40 (RO)  : CPL info {phase[16], status[15:1], dev_id[N_NVME_BITS-1:0]}
  */
 module nvme_axi_ctrl_parser (
   input  logic                        aclk,
@@ -40,18 +39,13 @@ module nvme_axi_ctrl_parser (
 
   // Status inputs
   input  logic                        nvme_done,
-  input  logic [15:0]                 nvme_error,
-
-  // CPL inputs
-  input  logic [N_NVME_BITS-1:0]      cpl_dev_id,
-  input  logic [14:0]                 cpl_status,
-  input  logic                        cpl_phase
+  input  logic [15:0]                 nvme_error
 );
 
 /////////////////////////////////////
 //          CONSTANTS             //
 ///////////////////////////////////
-localparam integer N_REGS = 9;
+localparam integer N_REGS = 8;
 localparam integer ADDR_MSB = $clog2(N_REGS);
 localparam integer ADDR_LSB = $clog2(AXIL_DATA_BITS/8);
 localparam integer AXI_ADDR_BITS = ADDR_LSB + ADDR_MSB;
@@ -86,7 +80,6 @@ localparam integer LBA_REG        = 4;  // LBA
 localparam integer LEN_REG        = 5;  // Transfer size
 localparam integer VADDR_REG      = 6;  // Virtual address
 localparam integer WRITE_REG      = 7;  // Write/Read flag
-localparam integer CPL_REG        = 8;  // CPL info (RO)
 
 /////////////////////////////////////
 //         WRITE PROCESS          //
@@ -167,8 +160,6 @@ always_ff @(posedge aclk) begin
       case (axi_araddr[ADDR_LSB+:ADDR_MSB])
         STATUS_REG:
           axi_rdata <= {32'b0, nvme_error, 15'b0, nvme_done};
-        CPL_REG:
-          axi_rdata <= {47'b0, cpl_phase, cpl_status, cpl_dev_id};
         default: ;
       endcase
     end

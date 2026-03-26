@@ -157,7 +157,9 @@ module nvme_top (
     // ================================================================
     // PRP Manager: prp_req -> MMU -> prp_rsp + prp_write
     // ================================================================
-    nvme_manage_prp inst_nvme_manage_prp (
+    nvme_manage_prp #(
+        .PRP_ADDR_BITS (5)
+    ) inst_nvme_manage_prp (
         .aclk                 (aclk),
         .aresetn              (aresetn),
         .s_nvme_prp_req       (prp_req_q),
