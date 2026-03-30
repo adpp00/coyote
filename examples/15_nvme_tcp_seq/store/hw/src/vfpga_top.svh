@@ -59,7 +59,7 @@ logic [VADDR_BITS-1:0]    mem_base;
 logic [63:0]              reg_nsid;
 logic [31:0]              reg_chunk_size;   // NVMe chunk size (bytes)
 
-logic [3:0]               fsm_state_out;
+logic [4:0]               fsm_state_out;
 logic                     listen_ok;
 logic [63:0]              timer;
 logic [31:0]              nvme_sent;
@@ -78,7 +78,7 @@ nvme_tcp_store_ctrl inst_ctrl (
     .nvme_lba_off(nvme_lba_off_out)
 );
 
-assign fsm_state_out = state_C[3:0];
+assign fsm_state_out = state_C;
 
 // ============================================================
 // Internal state
@@ -621,7 +621,7 @@ always_comb begin
 
     // Mux TX data based on state: ACK (status only) vs CPL (full stats)
     if (state_C == ST_ACK_DATA)
-        axis_tcp_send.tdata = {480'd0, 32'd0};  // [31:0] = status 0 (OK)
+        axis_tcp_send.tdata = {448'd0, latch_chunk_size, 32'd0};  // [31:0]=status, [63:32]=chunk_size
     else
         axis_tcp_send.tdata = {352'd0, block_recv, nvme_lba_off[63:0], nvme_done, {16'd0, last_error}};
 

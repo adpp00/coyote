@@ -302,7 +302,7 @@ module nvme_manage_prp #(
     // ================================================================
     // ILA Debug
     // ================================================================
-// `define EN_ILA_NVME_MANAGE_PRP
+`define EN_ILA_NVME_MANAGE_PRP
 `ifdef EN_ILA_NVME_MANAGE_PRP
     ila_nvme_manage_prp inst_ila_nvme_manage_prp (
         .clk    (aclk),

@@ -200,6 +200,16 @@ int main(int argc, char* argv[]) {
             close(fd);
             return 1;
         }
+
+        // Auto-adapt chunk_size from FPGA ACK [63:32]
+        uint32_t fpga_chunk = 0;
+        memcpy(&fpga_chunk, ack + 4, 4);
+        if (fpga_chunk != 0 && fpga_chunk != chunk_size) {
+            std::cout << "FPGA chunk_size=" << fpga_chunk
+                      << ", overriding client chunk=" << chunk_size << std::endl;
+            chunk_size = fpga_chunk;
+            expected_cpls = (data_len + chunk_size - 1) / chunk_size;
+        }
         std::cout << "ACK received (OK)" << std::endl;
     }
 
@@ -275,13 +285,14 @@ int main(int argc, char* argv[]) {
                         double gbps = (sec > 0)
                             ? ((uint64_t)cpls_recv * chunk_size / sec) / (1024.0*1024*1024) : 0;
 
+                        int64_t out = (int64_t)(total_sent/chunk_size) - (int64_t)cpls_recv;
                         std::cout << "\r  CPL #" << std::setw(3) << cpls_recv
                                   << " | lba=" << std::setw(5) << (lba_off/1024/1024) << "MB"
                                   << " | nvme=" << nvme_done
                                   << " | " << std::fixed << std::setprecision(2)
                                   << gbps << " GB/s"
-                                  << " | out=" << (total_sent/chunk_size - cpls_recv)
-                                  << std::flush;
+                                  << " | out=" << out
+                                  << "          " << std::flush;
                     }
 
                     // Check if all done
@@ -314,11 +325,12 @@ int main(int argc, char* argv[]) {
 
                 // Progress every 1MB
                 if (total_sent - last_print >= chunk_size) {
+                    int64_t out = (int64_t)(total_sent/chunk_size) - (int64_t)cpls_recv;
                     std::cout << "\rSent: " << std::setw(7) << (total_sent/1024/1024)
                               << " / " << (data_len/1024/1024) << " MB"
                               << " | cpls=" << cpls_recv
-                              << " | out=" << (total_sent/chunk_size - cpls_recv)
-                              << "     " << std::flush;
+                              << " | out=" << out
+                              << "          " << std::flush;
                     last_print = total_sent;
                 }
             }

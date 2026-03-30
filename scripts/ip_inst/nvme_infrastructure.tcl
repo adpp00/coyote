@@ -25,6 +25,22 @@ set_property -dict [list CONFIG.DATA_WIDTH {128} CONFIG.SINGLE_PORT_BRAM {1} CON
 # Already created in common_infrastructure.tcl — reused here
 
 # ============================================================================
+# NVMe User Interface FIFOs (depth 32, decouple user logic from pipeline)
+# ============================================================================
+
+# User request FIFO — 192-bit data (covers 134-bit nvme_user_req_t)
+create_ip -name axis_data_fifo -vendor xilinx.com -library ip -version 2.0 -module_name nvme_user_req_fifo
+set_property -dict [list CONFIG.TDATA_NUM_BYTES {24} CONFIG.FIFO_DEPTH {32} CONFIG.HAS_TKEEP {0} CONFIG.HAS_TSTRB {0} CONFIG.HAS_TLAST {0}] [get_ips nvme_user_req_fifo]
+
+# User response FIFO — 32-bit data (covers 16-bit error code)
+create_ip -name axis_data_fifo -vendor xilinx.com -library ip -version 2.0 -module_name nvme_user_rsp_fifo
+set_property -dict [list CONFIG.TDATA_NUM_BYTES {4} CONFIG.FIFO_DEPTH {32} CONFIG.HAS_TKEEP {0} CONFIG.HAS_TSTRB {0} CONFIG.HAS_TLAST {0}] [get_ips nvme_user_rsp_fifo]
+
+# User completion FIFO — 32-bit data (covers 18-bit nvme_cqe_t)
+create_ip -name axis_data_fifo -vendor xilinx.com -library ip -version 2.0 -module_name nvme_user_cpl_fifo
+set_property -dict [list CONFIG.TDATA_NUM_BYTES {4} CONFIG.FIFO_DEPTH {32} CONFIG.HAS_TKEEP {0} CONFIG.HAS_TSTRB {0} CONFIG.HAS_TLAST {0}] [get_ips nvme_user_cpl_fifo]
+
+# ============================================================================
 # ILA Debug Cores
 # ============================================================================
 
@@ -278,22 +294,33 @@ set_property -dict [list \
     CONFIG.C_PROBE13_WIDTH {16} \
 ] [get_ips ila_nvme_cq_ctrl]
 
-# --- ila_nvme_prp_ctrl: 8 probes ---
+# --- ila_nvme_prp_ctrl: 19 probes ---
 create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_nvme_prp_ctrl
 set_property -dict [list \
-    CONFIG.C_NUM_OF_PROBES {8} \
+    CONFIG.C_NUM_OF_PROBES {19} \
     CONFIG.C_EN_STRG_QUAL {1} \
     CONFIG.C_INPUT_PIPE_STAGES {1} \
     CONFIG.ALL_PROBE_SAME_MU_CNT {4} \
     CONFIG.C_DATA_DEPTH {1024} \
     CONFIG.C_PROBE0_WIDTH {1} \
     CONFIG.C_PROBE1_WIDTH {1} \
-    CONFIG.C_PROBE2_WIDTH {15} \
+    CONFIG.C_PROBE2_WIDTH {13} \
     CONFIG.C_PROBE3_WIDTH {32} \
     CONFIG.C_PROBE4_WIDTH {1} \
-    CONFIG.C_PROBE5_WIDTH {15} \
-    CONFIG.C_PROBE6_WIDTH {1} \
-    CONFIG.C_PROBE7_WIDTH {15} \
+    CONFIG.C_PROBE5_WIDTH {13} \
+    CONFIG.C_PROBE6_WIDTH {32} \
+    CONFIG.C_PROBE7_WIDTH {1} \
+    CONFIG.C_PROBE8_WIDTH {20} \
+    CONFIG.C_PROBE9_WIDTH {13} \
+    CONFIG.C_PROBE10_WIDTH {32} \
+    CONFIG.C_PROBE11_WIDTH {32} \
+    CONFIG.C_PROBE12_WIDTH {1} \
+    CONFIG.C_PROBE13_WIDTH {1} \
+    CONFIG.C_PROBE14_WIDTH {20} \
+    CONFIG.C_PROBE15_WIDTH {1} \
+    CONFIG.C_PROBE16_WIDTH {1} \
+    CONFIG.C_PROBE17_WIDTH {32} \
+    CONFIG.C_PROBE18_WIDTH {32} \
 ] [get_ips ila_nvme_prp_ctrl]
 
 # --- ila_nvme_cq_head_tracker: 16 probes ---

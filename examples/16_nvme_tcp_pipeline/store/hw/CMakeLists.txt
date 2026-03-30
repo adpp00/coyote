@@ -6,8 +6,8 @@ find_package(CoyoteHW REQUIRED)
 project(example_16_nvme_tcp_pipe_store)
 message("*** Coyote Example 16: TCP -> NVMe Pipelined Store [Hardware] ***")
 
-set(BUILD_STATIC 0)
-set(BUILD_SHELL 1)
+set(BUILD_STATIC 1)
+set(BUILD_SHELL 0)
 set(BUILD_OPT 1)
 
 set(EN_MEM 1)

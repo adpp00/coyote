@@ -178,9 +178,10 @@ int main(int argc, char* argv[]) {
 
     static const char* fsm_names[] = {
         "IDLE", "LISTEN", "WAIT_NOTIFY", "SEND_RD_PKG",
-        "WAIT_RX_META", "RECV_FIRST", "SUBMIT_DESC", "RECV_DATA",
-        "WAIT_MEM", "CHECK_BLOCK", "NVME_ISSUE", "NVME_DRAIN",
-        "CPL_META", "CPL_DATA", "CPL_WAIT", "DONE"
+        "WAIT_RX_META", "RECV_FIRST", "ACK_META", "ACK_DATA",
+        "ACK_WAIT", "SUBMIT_DESC", "RECV_DATA", "WAIT_MEM",
+        "CHECK_BLOCK", "NVME_ISSUE", "NVME_DRAIN", "CPL_META",
+        "CPL_DATA", "CPL_WAIT", "DONE"
     };
 
     while (running) {
@@ -196,7 +197,7 @@ int main(int argc, char* argv[]) {
 
         // Always print when FSM state changes
         if (fsm != prev_fsm) {
-            std::cout << "[FSM] " << (fsm < 16 ? fsm_names[fsm] : "???")
+            std::cout << "[FSM] " << (fsm < 19 ? fsm_names[fsm] : "???")
                       << " (" << fsm << ")"
                       << " | recv=" << bytes << " B"
                       << " | nvme_sent=" << sent
@@ -214,7 +215,7 @@ int main(int argc, char* argv[]) {
         if (bytes == prev_bytes && fsm == prev_fsm) {
             stall_count++;
             if (stall_count == 1000) {  // ~1 second stuck
-                std::cout << "[STALL] state=" << (fsm < 16 ? fsm_names[fsm] : "???")
+                std::cout << "[STALL] state=" << (fsm < 19 ? fsm_names[fsm] : "???")
                           << " recv=" << bytes << " B"
                           << " nvme_sent=" << sent << " nvme_done=" << done
                           << " lba=" << (lba_off / 1024) << " KB"
@@ -248,7 +249,7 @@ int main(int argc, char* argv[]) {
         }
 
         // Check if transfer is done
-        if (fsm == 15 && block_count > 0) {  // ST_DONE
+        if (fsm == 18 && block_count > 0) {  // ST_DONE
             std::cout << "\nTransfer complete!" << std::endl;
             std::cout << "Total stored: " << (lba_off / 1024 / 1024) << " MB" << std::endl;
             prev_lba = 0;

@@ -32,7 +32,7 @@ module nvme_tcp_store_ctrl (
     output logic [31:0]                 chunk_size,
 
     // Inputs (from user logic)
-    input  logic [3:0]                  fsm_state,
+    input  logic [4:0]                  fsm_state,
     input  logic                        listen_ok,
     input  logic [63:0]                 timer,
     input  logic [31:0]                 nvme_sent,
@@ -119,7 +119,7 @@ always_ff @(posedge aclk) begin
         axi_rdata <= '0;
         case (axi_araddr[ADDR_LSB+:ADDR_MSB])
             REG_CTRL:        axi_rdata         <= ctrl_reg[REG_CTRL];
-            REG_STATUS:      axi_rdata         <= {55'd0, listen_ok, 4'd0, fsm_state};
+            REG_STATUS:      axi_rdata         <= {54'd0, listen_ok, 4'd0, fsm_state};
             REG_LISTEN_PORT: axi_rdata[15:0]   <= ctrl_reg[REG_LISTEN_PORT][15:0];
             REG_MEM_BASE:    axi_rdata         <= ctrl_reg[REG_MEM_BASE];
             REG_NSID:        axi_rdata         <= ctrl_reg[REG_NSID];

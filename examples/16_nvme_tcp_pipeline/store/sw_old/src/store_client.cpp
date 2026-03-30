@@ -47,7 +47,6 @@ static void usage(const char* prog) {
               << "  -s, --size <bytes>  Total write size (default: 128M)\n"
               << "  -c, --chunk <bytes> Chunk size for completion tracking (default: 128K)\n"
               << "  -f, --file <file>   Input file to send (overrides -s)\n"
-              << "  -o, --outstanding N Max in-flight chunks before waiting for cpl (default: 0=unlimited)\n"
               << "  -t, --timeout <sec> Timeout in seconds (default: 30)\n"
               << "  -P, --pattern <val> Fill pattern byte (default: 0xAB)\n"
               << std::endl;
@@ -76,24 +75,22 @@ int main(int argc, char* argv[]) {
     const char* input_file = nullptr;
     int timeout_sec = 30;
     uint8_t pattern = 0xAB;
-    uint32_t max_outstanding = 0;  // 0 = unlimited
 
     static struct option long_opts[] = {
-        {"ip",          required_argument, 0, 'i'},
-        {"port",        required_argument, 0, 'p'},
-        {"addr",        required_argument, 0, 'a'},
-        {"size",        required_argument, 0, 's'},
-        {"chunk",       required_argument, 0, 'c'},
-        {"file",        required_argument, 0, 'f'},
-        {"outstanding", required_argument, 0, 'o'},
-        {"timeout",     required_argument, 0, 't'},
-        {"pattern",     required_argument, 0, 'P'},
-        {"help",        no_argument,       0, 'h'},
+        {"ip",      required_argument, 0, 'i'},
+        {"port",    required_argument, 0, 'p'},
+        {"addr",    required_argument, 0, 'a'},
+        {"size",    required_argument, 0, 's'},
+        {"chunk",   required_argument, 0, 'c'},
+        {"file",    required_argument, 0, 'f'},
+        {"timeout", required_argument, 0, 't'},
+        {"pattern", required_argument, 0, 'P'},
+        {"help",    no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "i:p:a:s:c:f:o:t:P:h", long_opts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "i:p:a:s:c:f:t:P:h", long_opts, NULL)) != -1) {
         switch (opt) {
             case 'i': ip = optarg; break;
             case 'p': port = std::stoi(optarg); break;
@@ -101,7 +98,6 @@ int main(int argc, char* argv[]) {
             case 's': data_len = parseSize(optarg); break;
             case 'c': chunk_size = parseSize(optarg); break;
             case 'f': input_file = optarg; break;
-            case 'o': max_outstanding = std::stoi(optarg); break;
             case 't': timeout_sec = std::stoi(optarg); break;
             case 'P': pattern = (uint8_t)strtoul(optarg, NULL, 0); break;
             default: usage(argv[0]); return (opt == 'h') ? 0 : 1;
@@ -126,7 +122,6 @@ int main(int argc, char* argv[]) {
     std::cout << "Addr:    0x" << std::hex << naddr << std::dec << std::endl;
     std::cout << "Write:   " << (data_len / 1024 / 1024) << " MB" << std::endl;
     std::cout << "Chunk:   " << (chunk_size / 1024) << " KB" << std::endl;
-    std::cout << "Outst:   " << (max_outstanding == 0 ? "unlimited" : std::to_string(max_outstanding)) << std::endl;
     std::cout << "Expect:  " << expected_cpls << " completions" << std::endl;
 
     // --- 1. Connect ---
@@ -212,14 +207,8 @@ int main(int argc, char* argv[]) {
     bool all_done = false;
 
     while (!all_done) {
-        // Outstanding flow control: how many chunks fully sent but not yet completed
-        uint32_t chunks_sent = total_sent / chunk_size;
-        uint32_t in_flight = chunks_sent - cpls_recv;
-        bool send_allowed = (total_sent < data_len) &&
-                            (max_outstanding == 0 || in_flight < max_outstanding);
-
         struct pollfd pfd = { .fd = fd, .events = 0, .revents = 0 };
-        if (send_allowed) pfd.events |= POLLOUT;
+        if (total_sent < data_len) pfd.events |= POLLOUT;
         if (cpls_recv < expected_cpls) pfd.events |= POLLIN;
 
         if (pfd.events == 0) { all_done = true; break; }
@@ -227,8 +216,7 @@ int main(int argc, char* argv[]) {
         int ret = poll(&pfd, 1, timeout_sec * 1000);
         if (ret == 0) {
             std::cerr << "\nTimeout! sent=" << (total_sent/1024/1024) << "MB"
-                      << " cpls=" << cpls_recv << "/" << expected_cpls
-                      << " inflight=" << in_flight << std::endl;
+                      << " cpls=" << cpls_recv << "/" << expected_cpls << std::endl;
             break;
         }
         if (ret < 0) { perror("poll"); break; }
@@ -259,30 +247,20 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Send data (flow-controlled by outstanding limit)
-        if ((pfd.revents & POLLOUT) && send_allowed) {
+        // Send data (no explicit flow control — FPGA ring handles backpressure via TCP window)
+        if ((pfd.revents & POLLOUT) && total_sent < data_len) {
             size_t to_send = data_len - total_sent;
             if (to_send > SEND_CHUNK) to_send = SEND_CHUNK;
 
-            // If outstanding limited, don't send past the next chunk boundary
-            // that would exceed the limit
-            if (max_outstanding > 0) {
-                uint64_t send_ceiling = (uint64_t)(cpls_recv + max_outstanding) * chunk_size;
-                if (total_sent + to_send > send_ceiling)
-                    to_send = send_ceiling - total_sent;
+            if (input_file) {
+                ssize_t r = read(in_fd, sendbuf, to_send);
+                if (r <= 0) { perror("read file"); break; }
+                to_send = r;
             }
 
-            if (to_send > 0) {
-                if (input_file) {
-                    ssize_t r = read(in_fd, sendbuf, to_send);
-                    if (r <= 0) { perror("read file"); break; }
-                    to_send = r;
-                }
-
-                ssize_t sent = send(fd, sendbuf, to_send, MSG_NOSIGNAL);
-                if (sent > 0)
-                    total_sent += sent;
-            }
+            ssize_t sent = send(fd, sendbuf, to_send, MSG_NOSIGNAL);
+            if (sent > 0)
+                total_sent += sent;
         }
     }
 

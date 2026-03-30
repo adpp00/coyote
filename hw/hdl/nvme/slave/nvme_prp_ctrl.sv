@@ -16,8 +16,9 @@ import lynxTypes::*;
 
 module nvme_prp_ctrl #(
     parameter integer NVME_QUEUE_BITS = lynxTypes::NVME_QUEUE_BITS,  // Default: 6 (64 entries)
-    parameter integer PRP_ADDR_BITS   = lynxTypes::PRP_ADDR_BITS,    // Default: 9 (512 entries, 2MB MTU)
-    parameter integer N_NVME_BITS     = lynxTypes::N_NVME_BITS       // Default: 2 (4 devices)
+    parameter integer PRP_ADDR_BITS   = lynxTypes::PRP_ADDR_BITS,    // Default: 5 (32 entries, 128KB max)
+    parameter integer N_NVME_BITS     = lynxTypes::N_NVME_BITS,      // Default: 2 (4 devices)
+    parameter integer PRP_AXI_OFFSET  = 0                             // BD residual offset (0 when base is EXT_ADDR_WIDTH-aligned)
 )(
     input  logic        aclk,
     input  logic        aresetn,
@@ -116,14 +117,22 @@ module nvme_prp_ctrl #(
 
     // ================================================================
     // Address remapping: external 4KB page → internal PRP_ADDR_BITS entries
-    // External byte addr: [EXT-1 : PAGE] = dev_id + sq_tail
-    //                     [PAGE-1 : PRP+BYTE] = unused (always 0)
-    //                     [PRP+BYTE-1 : BYTE] = entry_idx
-    //                     [BYTE-1 : 0] = byte offset
+    //
+    // BD interconnect does not translate addresses, so the full offset appears.
+    // leaving a residual offset (PRP_AXI_OFFSET) in the slave address.
+    // Subtract it before extracting {dev_id, sq_tail, entry_idx}.
+    //
+    // Clean byte addr: [EXT-1 : PAGE] = dev_id + sq_tail
+    //                  [PAGE-1 : PRP+BYTE] = unused (always 0)
+    //                  [PRP+BYTE-1 : BYTE] = entry_idx
+    //                  [BYTE-1 : 0] = byte offset
     // Internal BRAM addr: {dev_id, sq_tail, entry_idx}
     // ================================================================
-    assign b_addr = {bram_addr_a[EXT_ADDR_WIDTH-1 : EXT_PAGE_BITS],
-                     bram_addr_a[PRP_ADDR_BITS+BRAM_BYTE_BITS-1 : BRAM_BYTE_BITS]};
+    logic [EXT_ADDR_WIDTH-1:0] bram_addr_clean;
+    assign bram_addr_clean = bram_addr_a - PRP_AXI_OFFSET[EXT_ADDR_WIDTH-1:0];
+
+    assign b_addr = {bram_addr_clean[EXT_ADDR_WIDTH-1 : EXT_PAGE_BITS],
+                     bram_addr_clean[PRP_ADDR_BITS+BRAM_BYTE_BITS-1 : BRAM_BYTE_BITS]};
 
     // ================================================================
     // Read data: direct connection (64-bit AXI ↔ 64-bit BRAM)
@@ -159,18 +168,32 @@ module nvme_prp_ctrl #(
     // ================================================================
     // ILA Debug
     // ================================================================
-// `define EN_ILA_NVME_PRP_CTRL
+`define EN_ILA_NVME_PRP_CTRL
 `ifdef EN_ILA_NVME_PRP_CTRL
     ila_nvme_prp_ctrl inst_ila_nvme_prp_ctrl (
         .clk    (aclk),
+        // Write port (from manage_prp)
         .probe0 (s_prp.valid),                          // 1
         .probe1 (s_prp.ready),                          // 1
-        .probe2 (s_prp.data.addr),                      // NVME_QUEUE_BITS+PRP_ADDR_BITS+N_NVME_BITS (15)
+        .probe2 (s_prp.data.addr),                      // ADDR_BITS
         .probe3 (s_prp.data.data[31:0]),                // 32
-        .probe4 (bram_en_a),                            // 1
-        .probe5 (b_addr),                               // ADDR_BITS (15)
-        .probe6 (a_en),                                 // 1
-        .probe7 (a_addr)                                // ADDR_BITS (15)
+        .probe4 (a_en),                                 // 1
+        .probe5 (a_addr),                               // ADDR_BITS
+        .probe6 (a_data_in[31:0]),                      // 32
+        // Read port (from AXI BRAM ctrl — NVMe device reads)
+        .probe7 (bram_en_a),                            // 1
+        .probe8 (bram_addr_a),                          // EXT_ADDR_WIDTH
+        .probe9 (b_addr),                               // ADDR_BITS
+        .probe10(b_data_out[31:0]),                     // 32
+        .probe11(b_data_out[63:32]),                    // 32
+        // AXI read channel
+        .probe12(s_prp_ctrl.arvalid),                   // 1
+        .probe13(s_prp_ctrl.arready),                   // 1
+        .probe14(s_prp_ctrl.araddr[19:0]),              // 20
+        .probe15(s_prp_ctrl.rvalid),                    // 1
+        .probe16(s_prp_ctrl.rready),                    // 1
+        .probe17(s_prp_ctrl.rdata[31:0]),               // 32
+        .probe18(s_prp_ctrl.rdata[63:32])               // 32
     );
 `endif
 

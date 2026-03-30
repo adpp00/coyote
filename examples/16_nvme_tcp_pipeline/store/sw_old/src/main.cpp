@@ -1,11 +1,9 @@
 /**
- * Example 16 — Pipelined Read v2: NVMe → TCP (FPGA-side host)
+ * Example 16 — Pipelined Store v2: TCP → NVMe (FPGA-side host)
+ * SW for build/ bitstream (intermediate v2: 4-bit rx_state, 3-bit nv_state, 2-bit tx_state)
  *
- * This program:
- *   1. Initializes NVMe device 0
- *   2. Allocates HBM ring buffer
- *   3. Configures FPGA pipeline registers (chunk_size, n_slots, dma_block_size)
- *   4. Starts TCP listen, polls for progress
+ * status_bits = {tx_state(2), listen_ok(1), nv_state(3), rx_state(4)} = 10 bits
+ * listen_ok = bit 7
  */
 
 #include <iostream>
@@ -20,7 +18,7 @@
 
 using namespace coyote;
 
-/* Register map (must match nvme_tcp_pipe_read_ctrl v2) */
+/* Register map (must match nvme_tcp_pipe_store_ctrl v2 — build/ bitstream) */
 enum Reg : uint32_t {
     CTRL           = 0,
     STATUS         = 1,
@@ -37,8 +35,7 @@ enum Reg : uint32_t {
     LAST_ERROR     = 12,
     BYTES_TOTAL    = 13,
     WR_PTR         = 14,
-    RD_PTR         = 15,
-    MAX_OUTSTANDING = 16
+    RD_NVME_PTR    = 15
 };
 
 static constexpr uint64_t START = 1;
@@ -61,24 +58,22 @@ static uint64_t parseSize(const char *s) {
 static void usage(const char *prog) {
     std::cout << "Usage: " << prog << " [options]\n"
               << "  -b, --bdf <BDF>       NVMe BDF (e.g., 65:00.0)\n"
-              << "  -p, --port <port>     TCP listen port (default: 5002)\n"
+              << "  -p, --port <port>     TCP listen port (default: 5001)\n"
               << "  -c, --chunk <bytes>   Chunk/slot size (default: 128K)\n"
-              << "  -d, --dma <bytes>     DMA block size (default: 4K)\n"
+              << "  -d, --dma <bytes>     DMA block size (default: 8K)\n"
               << "  -r, --ring <bytes>    Ring buffer size (default: 128M)\n"
               << "  -a, --alloc <bytes>   NVMe allocation size (default: 128M)\n"
-              << "  -q, --qd <num>        Max outstanding NVMe cmds (default: 56)\n"
               << "  -v, --vfpga <id>      vFPGA ID (default: 0)\n"
               << std::endl;
 }
 
 int main(int argc, char* argv[]) {
     std::string bdf = "65:00.0";
-    uint16_t tcp_port = 5002;
+    uint16_t tcp_port = 5001;
     uint32_t chunk_size = 128 * 1024;
-    uint32_t dma_block_size = 4 * 1024;
+    uint32_t dma_block_size = 8 * 1024;
     uint64_t ring_size = 128ULL * 1024 * 1024;
     uint64_t alloc_size = 128ULL * 1024 * 1024;
-    uint32_t max_outstanding = 56;
     int vfpga_id = 0;
 
     static struct option long_opts[] = {
@@ -88,13 +83,12 @@ int main(int argc, char* argv[]) {
         {"dma",   required_argument, 0, 'd'},
         {"ring",  required_argument, 0, 'r'},
         {"alloc", required_argument, 0, 'a'},
-        {"qd",    required_argument, 0, 'q'},
         {"vfpga", required_argument, 0, 'v'},
         {0, 0, 0, 0}
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "b:p:c:d:r:a:q:v:", long_opts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "b:p:c:d:r:a:v:", long_opts, NULL)) != -1) {
         switch (opt) {
             case 'b': bdf = optarg; break;
             case 'p': tcp_port = std::stoi(optarg); break;
@@ -102,22 +96,21 @@ int main(int argc, char* argv[]) {
             case 'd': dma_block_size = parseSize(optarg); break;
             case 'r': ring_size = parseSize(optarg); break;
             case 'a': alloc_size = parseSize(optarg); break;
-            case 'q': max_outstanding = std::stoi(optarg); break;
             case 'v': vfpga_id = std::stoi(optarg); break;
             default: usage(argv[0]); return 1;
         }
     }
 
     uint32_t n_slots = ring_size / chunk_size;
+    uint32_t dma_per_slot = chunk_size / dma_block_size;
 
-    std::cout << "=== NVMe TCP Pipelined Read v2 ===" << std::endl;
+    std::cout << "=== NVMe TCP Pipelined Store v2 ===" << std::endl;
     std::cout << "BDF:         " << bdf << std::endl;
     std::cout << "TCP port:    " << tcp_port << std::endl;
     std::cout << "Chunk size:  " << (chunk_size / 1024) << " KB" << std::endl;
     std::cout << "DMA block:   " << (dma_block_size / 1024) << " KB" << std::endl;
     std::cout << "Ring buffer: " << (ring_size / 1024 / 1024) << " MB (" << n_slots << " slots)" << std::endl;
-    std::cout << "DMA/slot:    " << (chunk_size / dma_block_size) << " descriptors" << std::endl;
-    std::cout << "Max QD:      " << max_outstanding << std::endl;
+    std::cout << "DMA/slot:    " << dma_per_slot << " descriptors" << std::endl;
 
     signal(SIGINT, sighandler);
 
@@ -137,6 +130,7 @@ int main(int argc, char* argv[]) {
         std::cout << "Clamping chunk to MDTS: " << dev->mdts << std::endl;
         chunk_size = dev->mdts;
         n_slots = ring_size / chunk_size;
+        dma_per_slot = chunk_size / dma_block_size;
     }
 
     /* Allocate HBM ring buffer */
@@ -150,9 +144,7 @@ int main(int argc, char* argv[]) {
     ct.invoke(CoyoteOper::LOCAL_OFFLOAD, syncSg{ring_buf, ring_size});
     std::cout << "Ring buffer: " << ring_buf << " (offloaded to HBM)" << std::endl;
 
-    /* Configure FPGA — all values pre-computed in SW, no HW division */
-    uint32_t dma_per_slot = chunk_size / dma_block_size;
-
+    /* Configure FPGA */
     ct.setCSR(reinterpret_cast<uint64_t>(ring_buf), Reg::HBM_BASE);
     ct.setCSR(chunk_size,                            Reg::CHUNK_SIZE);
     ct.setCSR(n_slots,                               Reg::N_SLOTS);
@@ -160,28 +152,28 @@ int main(int argc, char* argv[]) {
     ct.setCSR(dma_per_slot,                          Reg::DMA_PER_SLOT);
     ct.setCSR(tcp_port,                              Reg::LISTEN_PORT);
     ct.setCSR(dev->nsid,                             Reg::NSID);
-    ct.setCSR(max_outstanding,                       Reg::MAX_OUTSTANDING);
 
     /* Start */
     ct.setCSR(START, Reg::CTRL);
 
-    /* Verify listen */
+    /* Verify listen — listen_ok = status_bits[7] for this build */
     for (int i = 0; i < 100; i++) {
         usleep(10000);
         uint64_t status = ct.getCSR(Reg::STATUS);
-        if (status & (1 << 5)) {  // listen_ok = status_bits[5]
+        if (status & (1 << 7)) {
             std::cout << "TCP listen OK on port " << tcp_port << std::endl;
             break;
         }
         if (i == 99) {
-            std::cerr << "TCP listen failed (timeout)" << std::endl;
+            std::cerr << "TCP listen failed (timeout), status=0x"
+                      << std::hex << status << std::dec << std::endl;
             ct.freeMem(ring_buf);
             ct.closeNVMe(dev);
             return 1;
         }
     }
 
-    std::cout << "\nWaiting for client requests (Ctrl+C to stop)..." << std::endl;
+    std::cout << "\nWaiting for transfers (Ctrl+C to stop)..." << std::endl;
     std::cout << std::string(70, '-') << std::endl;
 
     /* Poll loop */
@@ -189,7 +181,7 @@ int main(int argc, char* argv[]) {
 
     while (running) {
         uint32_t wp      = ct.getCSR(Reg::WR_PTR);
-        uint32_t rp      = ct.getCSR(Reg::RD_PTR);
+        uint32_t rp      = ct.getCSR(Reg::RD_NVME_PTR);
         uint32_t sent    = ct.getCSR(Reg::NVME_SENT);
         uint32_t done    = ct.getCSR(Reg::NVME_DONE);
         uint64_t bytes   = ct.getCSR(Reg::BYTES_TOTAL);

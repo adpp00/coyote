@@ -188,7 +188,7 @@ extern bool en_hmm;
 #define NVME_SQ_SIZE        0x1000
 #define NVME_CQ_BASE        0x04020000  // CQ BRAM: 4KB per device
 #define NVME_CQ_SIZE        0x1000
-#define NVME_PRP_BASE       0x04040000  // PRP BRAM: 256KB per device
+#define NVME_PRP_BASE       0x04800000  // PRP BRAM: 256KB per device (22-bit aligned)
 #define NVME_PRP_SIZE       0x40000
 #define MAX_NVME_DEVICES    16
 

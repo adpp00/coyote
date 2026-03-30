@@ -48,7 +48,7 @@ module nvme_top (
     // ================================================================
     // Address Offset Constants (must match driver)
     // ================================================================
-    localparam logic [63:0] PRP_OFFSET = 64'h0404_0000;
+    localparam logic [63:0] PRP_OFFSET = 64'h0480_0000;
 
     // ================================================================
     // Internal signal declarations
@@ -63,6 +63,11 @@ module nvme_top (
     metaIntf #(.STYPE(nvme_user_req_t)) user_req_arb ();
     metaIntf #(.STYPE(logic [15:0]))    user_rsp_arb ();
     metaIntf #(.STYPE(nvme_cqe_t))      user_cpl_arb ();
+
+    // Post-FIFO signals (decouple user logic from pipeline)
+    metaIntf #(.STYPE(nvme_user_req_t)) user_req_arb_q (.aclk(aclk));
+    metaIntf #(.STYPE(logic [15:0]))    user_rsp_pre   (.aclk(aclk));
+    metaIntf #(.STYPE(nvme_cqe_t))      user_cpl_pre   (.aclk(aclk));
 
     // ================================================================
     // Pipeline internal metaIntf
@@ -105,12 +110,26 @@ module nvme_top (
     );
 
     // ================================================================
+    // User request FIFO (depth 32): user_req_arb → user_req_arb_q
+    // ================================================================
+    nvme_user_req_fifo inst_user_req_fifo (
+        .s_axis_aresetn (aresetn),
+        .s_axis_aclk    (aclk),
+        .s_axis_tvalid  (user_req_arb.valid),
+        .s_axis_tready  (user_req_arb.ready),
+        .s_axis_tdata   (user_req_arb.data),
+        .m_axis_tvalid  (user_req_arb_q.valid),
+        .m_axis_tready  (user_req_arb_q.ready),
+        .m_axis_tdata   (user_req_arb_q.data)
+    );
+
+    // ================================================================
     // Stage 0: Parse user request
     // ================================================================
     nvme_s0 inst_nvme_s0 (
         .aclk            (aclk),
         .aresetn         (aresetn),
-        .s_nvme_user_req (user_req_arb),
+        .s_nvme_user_req (user_req_arb_q),
         .m_nvme_info_req (tbl_req),
         .m_nvme_cmd_s0   (cmd_s0)
     );
@@ -123,9 +142,24 @@ module nvme_top (
         .aresetn         (aresetn),
         .s_nvme_cmd_s0   (cmd_s0),
         .s_nvme_info_rsp (tbl_rsp),
-        .m_nvme_user_rsp (user_rsp_arb),
+        .m_nvme_user_rsp (user_rsp_pre),
         .m_nvme_prp_req  (prp_req),
         .m_nvme_cmd_s1   (cmd_s1)
+    );
+
+    // ================================================================
+    // User response FIFO (depth 32): user_rsp_pre → user_rsp_arb
+    // Pipeline never stalls on user not accepting rsp.
+    // ================================================================
+    nvme_user_rsp_fifo inst_user_rsp_fifo (
+        .s_axis_aresetn (aresetn),
+        .s_axis_aclk    (aclk),
+        .s_axis_tvalid  (user_rsp_pre.valid),
+        .s_axis_tready  (user_rsp_pre.ready),
+        .s_axis_tdata   (user_rsp_pre.data),
+        .m_axis_tvalid  (user_rsp_arb.valid),
+        .m_axis_tready  (user_rsp_arb.ready),
+        .m_axis_tdata   (user_rsp_arb.data)
     );
 
     // ================================================================
@@ -157,9 +191,7 @@ module nvme_top (
     // ================================================================
     // PRP Manager: prp_req -> MMU -> prp_rsp + prp_write
     // ================================================================
-    nvme_manage_prp #(
-        .PRP_ADDR_BITS (5)
-    ) inst_nvme_manage_prp (
+    nvme_manage_prp inst_nvme_manage_prp (
         .aclk                 (aclk),
         .aresetn              (aresetn),
         .s_nvme_prp_req       (prp_req_q),
@@ -201,11 +233,7 @@ module nvme_top (
     // ================================================================
     // PRP list controller
     // ================================================================
-    nvme_prp_ctrl #(
-        .NVME_QUEUE_BITS (6),
-        .PRP_ADDR_BITS   (5),
-        .N_NVME_BITS     (N_NVME_BITS)
-    ) inst_nvme_prp_ctrl (
+    nvme_prp_ctrl inst_nvme_prp_ctrl (
         .aclk       (aclk),
         .aresetn    (aresetn),
         .s_prp      (prp_write_strm),
@@ -268,7 +296,7 @@ module nvme_top (
     end
 
     // ================================================================
-    // CQE FIFO + user completion output
+    // CQE internal FIFO (break cq_ctrl → cq_head_tracker loop)
     // ================================================================
     axis_data_fifo_meta_32 inst_cqe_fifo (
         .s_axis_aresetn (aresetn),
@@ -281,9 +309,24 @@ module nvme_top (
         .m_axis_tdata   (cqe_strm_q.data)
     );
 
-    assign user_cpl_arb.valid = cqe_strm_q.valid;
-    assign user_cpl_arb.data  = cqe_strm_q.data;
-    assign cqe_strm_q.ready   = user_cpl_arb.ready;
+    assign user_cpl_pre.valid = cqe_strm_q.valid;
+    assign user_cpl_pre.data  = cqe_strm_q.data;
+    assign cqe_strm_q.ready   = user_cpl_pre.ready;
+
+    // ================================================================
+    // User completion FIFO (depth 32): user_cpl_pre → user_cpl_arb
+    // Pipeline never stalls on user not accepting cpl.
+    // ================================================================
+    nvme_user_cpl_fifo inst_user_cpl_fifo (
+        .s_axis_aresetn (aresetn),
+        .s_axis_aclk    (aclk),
+        .s_axis_tvalid  (user_cpl_pre.valid),
+        .s_axis_tready  (user_cpl_pre.ready),
+        .s_axis_tdata   (user_cpl_pre.data),
+        .m_axis_tvalid  (user_cpl_arb.valid),
+        .m_axis_tready  (user_cpl_arb.ready),
+        .m_axis_tdata   (user_cpl_arb.data)
+    );
 
     // ================================================================
     // SQ Doorbell Writer

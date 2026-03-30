@@ -30,7 +30,7 @@
 #define NVME_SQ_SIZE    0x1000ULL        /* 4KB per device */
 #define NVME_CQ_BASE    0x04020000ULL
 #define NVME_CQ_SIZE    0x1000ULL
-#define NVME_PRP_BASE   0x04040000ULL
+#define NVME_PRP_BASE   0x04800000ULL
 #define NVME_PRP_SIZE   0x40000ULL       /* 256KB per device */
 
 /* SQE = 64 bytes = 16 DWORDs */

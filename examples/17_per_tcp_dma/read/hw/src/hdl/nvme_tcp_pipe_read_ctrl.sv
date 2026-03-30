@@ -1,28 +1,28 @@
 /**
- * nvme_tcp_pipe_store_ctrl — AXI-Lite control register parser (v2)
+ * nvme_tcp_pipe_read_ctrl — AXI-Lite control register parser (v2)
  *
  * Register Map (AXIL_DATA_BITS = 64):
  *   0  (W1S) : CTRL            - bit0=START
- *   1  (RO)  : STATUS          - [3:0]=rx_state, [6:4]=nv_state, [8]=listen_ok, [10:9]=tx_state
+ *   1  (RO)  : STATUS          - [2:0]=meta_state, [5:3]=nv_state, [6]=listen_ok, [10:7]=tx_state
  *   2  (WR)  : LISTEN_PORT     - TCP listen port
  *   3  (WR)  : HBM_BASE        - Ring buffer base vaddr
  *   4  (WR)  : CHUNK_SIZE      - Bytes per slot (direct value)
  *   5  (WR)  : N_SLOTS         - Ring buffer slot count
- *   6  (WR)  : DMA_BLOCK_SIZE  - DMA write granularity (e.g. 4096)
+ *   6  (WR)  : DMA_BLOCK_SIZE  - DMA read granularity for TCP TX (e.g. 32768)
  *   7  (WR)  : DMA_PER_SLOT    - chunk_size / dma_block_size (SW pre-computed)
  *   8  (WR)  : NSID            - NVMe namespace ID
  *   9  (RO)  : TIMER           - Cycle counter
  *  10  (RO)  : NVME_SENT       - NVMe commands issued
  *  11  (RO)  : NVME_DONE       - NVMe completions received
  *  12  (RO)  : LAST_ERROR      - Last NVMe error code
- *  13  (RO)  : BYTES_TOTAL     - Total TCP bytes received
- *  14  (RO)  : WR_PTR          - Current write pointer
- *  15  (RO)  : RD_NVME_PTR     - Current NVMe read pointer
+ *  13  (RO)  : BYTES_TOTAL     - Total TCP bytes sent
+ *  14  (RO)  : WR_PTR          - Current NVMe write pointer
+ *  15  (RO)  : RD_PTR          - Current TX read pointer
  */
 
 import lynxTypes::*;
 
-module nvme_tcp_pipe_store_ctrl (
+module nvme_tcp_pipe_read_ctrl (
     input  logic                        aclk,
     input  logic                        aresetn,
 
@@ -47,7 +47,7 @@ module nvme_tcp_pipe_store_ctrl (
     input  logic [15:0]                 last_error,
     input  logic [63:0]                 bytes_total,
     input  logic [31:0]                 wr_ptr,
-    input  logic [31:0]                 rd_nvme_ptr
+    input  logic [31:0]                 rd_ptr
 );
 
 localparam integer N_REGS = 16;
@@ -86,7 +86,7 @@ localparam integer REG_NVME_DONE      = 11;
 localparam integer REG_LAST_ERROR     = 12;
 localparam integer REG_BYTES_TOTAL    = 13;
 localparam integer REG_WR_PTR         = 14;
-localparam integer REG_RD_NVME_PTR    = 15;
+localparam integer REG_RD_PTR         = 15;
 
 // ============================================================
 // Write
@@ -148,7 +148,7 @@ always_ff @(posedge aclk) begin
             REG_LAST_ERROR:     axi_rdata[15:0]          <= last_error;
             REG_BYTES_TOTAL:    axi_rdata                <= bytes_total;
             REG_WR_PTR:         axi_rdata[31:0]          <= wr_ptr;
-            REG_RD_NVME_PTR:    axi_rdata[31:0]          <= rd_nvme_ptr;
+            REG_RD_PTR:         axi_rdata[31:0]          <= rd_ptr;
             default: ;
         endcase
     end

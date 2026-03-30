@@ -37,8 +37,7 @@ enum Reg : uint32_t {
     LAST_ERROR     = 12,
     BYTES_TOTAL    = 13,
     WR_PTR         = 14,
-    RD_PTR         = 15,
-    MAX_OUTSTANDING = 16
+    RD_PTR         = 15
 };
 
 static constexpr uint64_t START = 1;
@@ -63,10 +62,9 @@ static void usage(const char *prog) {
               << "  -b, --bdf <BDF>       NVMe BDF (e.g., 65:00.0)\n"
               << "  -p, --port <port>     TCP listen port (default: 5002)\n"
               << "  -c, --chunk <bytes>   Chunk/slot size (default: 128K)\n"
-              << "  -d, --dma <bytes>     DMA block size (default: 4K)\n"
+              << "  -d, --dma <bytes>     DMA block size (default: 32K)\n"
               << "  -r, --ring <bytes>    Ring buffer size (default: 128M)\n"
               << "  -a, --alloc <bytes>   NVMe allocation size (default: 128M)\n"
-              << "  -q, --qd <num>        Max outstanding NVMe cmds (default: 56)\n"
               << "  -v, --vfpga <id>      vFPGA ID (default: 0)\n"
               << std::endl;
 }
@@ -75,10 +73,9 @@ int main(int argc, char* argv[]) {
     std::string bdf = "65:00.0";
     uint16_t tcp_port = 5002;
     uint32_t chunk_size = 128 * 1024;
-    uint32_t dma_block_size = 4 * 1024;
+    uint32_t dma_block_size = 32 * 1024;
     uint64_t ring_size = 128ULL * 1024 * 1024;
     uint64_t alloc_size = 128ULL * 1024 * 1024;
-    uint32_t max_outstanding = 56;
     int vfpga_id = 0;
 
     static struct option long_opts[] = {
@@ -88,13 +85,12 @@ int main(int argc, char* argv[]) {
         {"dma",   required_argument, 0, 'd'},
         {"ring",  required_argument, 0, 'r'},
         {"alloc", required_argument, 0, 'a'},
-        {"qd",    required_argument, 0, 'q'},
         {"vfpga", required_argument, 0, 'v'},
         {0, 0, 0, 0}
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "b:p:c:d:r:a:q:v:", long_opts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "b:p:c:d:r:a:v:", long_opts, NULL)) != -1) {
         switch (opt) {
             case 'b': bdf = optarg; break;
             case 'p': tcp_port = std::stoi(optarg); break;
@@ -102,7 +98,6 @@ int main(int argc, char* argv[]) {
             case 'd': dma_block_size = parseSize(optarg); break;
             case 'r': ring_size = parseSize(optarg); break;
             case 'a': alloc_size = parseSize(optarg); break;
-            case 'q': max_outstanding = std::stoi(optarg); break;
             case 'v': vfpga_id = std::stoi(optarg); break;
             default: usage(argv[0]); return 1;
         }
@@ -117,7 +112,6 @@ int main(int argc, char* argv[]) {
     std::cout << "DMA block:   " << (dma_block_size / 1024) << " KB" << std::endl;
     std::cout << "Ring buffer: " << (ring_size / 1024 / 1024) << " MB (" << n_slots << " slots)" << std::endl;
     std::cout << "DMA/slot:    " << (chunk_size / dma_block_size) << " descriptors" << std::endl;
-    std::cout << "Max QD:      " << max_outstanding << std::endl;
 
     signal(SIGINT, sighandler);
 
@@ -160,7 +154,6 @@ int main(int argc, char* argv[]) {
     ct.setCSR(dma_per_slot,                          Reg::DMA_PER_SLOT);
     ct.setCSR(tcp_port,                              Reg::LISTEN_PORT);
     ct.setCSR(dev->nsid,                             Reg::NSID);
-    ct.setCSR(max_outstanding,                       Reg::MAX_OUTSTANDING);
 
     /* Start */
     ct.setCSR(START, Reg::CTRL);

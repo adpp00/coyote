@@ -55,10 +55,10 @@ proc cr_bd_design_ctrl { parentCell } {
 
   set axi_main [ create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:aximm_rtl:1.0 axi_main ]
   set_property -dict [list \
-    CONFIG.MAX_BURST_LENGTH {16} \
+    CONFIG.MAX_BURST_LENGTH {64} \
     CONFIG.ID_WIDTH {6} \
-    CONFIG.NUM_WRITE_OUTSTANDING {8} \
-    CONFIG.NUM_READ_OUTSTANDING {8} \
+    CONFIG.NUM_WRITE_OUTSTANDING {16} \
+    CONFIG.NUM_READ_OUTSTANDING {16} \
     CONFIG.SUPPORTS_NARROW_BURST {0} \
     CONFIG.ADDR_WIDTH {64} \
     CONFIG.PROTOCOL {AXI4} \
@@ -182,8 +182,8 @@ proc cr_bd_design_ctrl { parentCell } {
       CONFIG.ADDR_WIDTH {64} \
       CONFIG.DATA_WIDTH {512} \
       CONFIG.PROTOCOL {AXI4} \
-      CONFIG.NUM_READ_OUTSTANDING {8} \
-      CONFIG.NUM_WRITE_OUTSTANDING {8} \
+      CONFIG.NUM_READ_OUTSTANDING {16} \
+      CONFIG.NUM_WRITE_OUTSTANDING {16} \
       CONFIG.READ_WRITE_MODE {READ_WRITE} \
     ] $axi_direct
   }
@@ -429,8 +429,8 @@ create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 proc_sys_reset_u
       [get_bd_addr_segs axi_nvme_cq/Reg] \
       SEG_axi_nvme_cq_Reg
 
-    # nvme_prp: 4MB (256KB * 16 devices) @ 64MB+256KB
-    create_bd_addr_seg -range 0x00400000 -offset 0x04040000 \
+    # nvme_prp: 4MB @ 0x04800000 (22-bit aligned for N_NVME_BITS up to 4)
+    create_bd_addr_seg -range 0x00400000 -offset 0x04800000 \
       [get_bd_addr_spaces /axi_main] \
       [get_bd_addr_segs axi_nvme_prp/Reg] \
       SEG_axi_nvme_prp_Reg
