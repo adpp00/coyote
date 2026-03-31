@@ -39,6 +39,7 @@ enum Reg : uint32_t {
 
 static constexpr uint64_t START_RD = 1;
 static constexpr uint64_t START_WR = 2;
+static constexpr uint64_t OFFLOAD_MAX = 128ULL * 1024 * 1024;  // Coyote offload limit
 
 static uint64_t parseSize(const char *s) {
     char *end;
@@ -211,10 +212,16 @@ int main(int argc, char* argv[]) {
     }
     memset(buf, 0xAB, total_size);
 
-    /* FPGA memory: offload buffer to HBM */
+    /* FPGA memory: offload buffer to HBM (chunked, max 128MB per call) */
     if (use_fpga_mem) {
-        std::cout << "Offloading buffer to FPGA HBM..." << std::endl;
-        ct.invoke(CoyoteOper::LOCAL_OFFLOAD, syncSg{buf, total_size});
+        uint64_t n_offloads = (total_size + OFFLOAD_MAX - 1) / OFFLOAD_MAX;
+        std::cout << "Offloading " << formatSize(total_size) << " to HBM ("
+                  << n_offloads << " x " << formatSize(OFFLOAD_MAX) << ")..." << std::endl;
+        for (uint64_t off = 0; off < total_size; off += OFFLOAD_MAX) {
+            uint64_t len = std::min(OFFLOAD_MAX, total_size - off);
+            ct.invoke(CoyoteOper::LOCAL_OFFLOAD,
+                      syncSg{reinterpret_cast<uint8_t*>(buf) + off, len});
+        }
         std::cout << "Offload complete" << std::endl;
     }
 
@@ -281,8 +288,13 @@ int main(int argc, char* argv[]) {
         std::cout << "1. Fill buffer with pattern..." << std::flush;
         for (uint64_t i = 0; i < total_size; i++)
             host_buf[i] = (uint8_t)(i & 0xFF);
-        if (use_fpga_mem)
-            ct.invoke(CoyoteOper::LOCAL_OFFLOAD, syncSg{buf, total_size});
+        if (use_fpga_mem) {
+            for (uint64_t off = 0; off < total_size; off += OFFLOAD_MAX) {
+                uint64_t len = std::min(OFFLOAD_MAX, total_size - off);
+                ct.invoke(CoyoteOper::LOCAL_OFFLOAD,
+                          syncSg{host_buf + off, len});
+            }
+        }
         std::cout << " OK" << std::endl;
 
         // Step 2: NVMe WRITE (buffer → SSD)
@@ -292,8 +304,13 @@ int main(int argc, char* argv[]) {
         // Step 3: Clear buffer and offload zeros
         std::cout << "3. Clear buffer..." << std::flush;
         memset(host_buf, 0x00, total_size);
-        if (use_fpga_mem)
-            ct.invoke(CoyoteOper::LOCAL_OFFLOAD, syncSg{buf, total_size});
+        if (use_fpga_mem) {
+            for (uint64_t off = 0; off < total_size; off += OFFLOAD_MAX) {
+                uint64_t len = std::min(OFFLOAD_MAX, total_size - off);
+                ct.invoke(CoyoteOper::LOCAL_OFFLOAD,
+                          syncSg{host_buf + off, len});
+            }
+        }
         std::cout << " OK" << std::endl;
 
         // Step 4: NVMe READ (SSD → buffer)
@@ -303,7 +320,11 @@ int main(int argc, char* argv[]) {
         // Step 5: Sync back from HBM to host
         if (use_fpga_mem) {
             std::cout << "5. Sync HBM → host..." << std::flush;
-            ct.invoke(CoyoteOper::LOCAL_SYNC, syncSg{buf, total_size});
+            for (uint64_t off = 0; off < total_size; off += OFFLOAD_MAX) {
+                uint64_t len = std::min(OFFLOAD_MAX, total_size - off);
+                ct.invoke(CoyoteOper::LOCAL_SYNC,
+                          syncSg{host_buf + off, len});
+            }
             std::cout << " OK" << std::endl;
         }
 
