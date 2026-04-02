@@ -9,8 +9,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TCL_SCRIPT="$SCRIPT_DIR/flash_xrt_bitstream.tcl"
 
 # Default values
-SERIAL=""
-DEVICE=""
 HOTPLUG=1
 
 # PCIe info
@@ -66,58 +64,6 @@ find_vivado() {
     elif [ -d "/tools/Xilinx/Vivado" ]; then
         local ver=$(ls /tools/Xilinx/Vivado 2>/dev/null | sort -V | tail -1)
         [ -n "$ver" ] && echo "/tools/Xilinx/Vivado/$ver/bin/vivado"
-    fi
-}
-
-detect_serial() {
-    echo -n "  Detecting JTAG target... "
-
-    local tcl=$(mktemp)
-    cat > "$tcl" << 'EOF'
-open_hw_manager
-connect_hw_server -url localhost:3121 -allow_non_jtag
-foreach t [get_hw_targets *xilinx_tcf/Xilinx/*] {
-    puts "SERIAL:[lindex [split $t /] end]"
-}
-close_hw_manager
-exit
-EOF
-
-    local result=$("$VIVADO" -mode tcl -nolog -nojournal -source "$tcl" 2>/dev/null | grep "^SERIAL:" | head -1)
-    rm -f "$tcl"
-
-    if [ -n "$result" ]; then
-        SERIAL="${result#SERIAL:}"
-        echo "$SERIAL"
-    else
-        echo "FAILED"
-        error "No JTAG target found. Check cable connection."
-    fi
-}
-
-detect_device() {
-    echo -n "  Detecting device... "
-
-    local tcl=$(mktemp)
-    cat > "$tcl" << EOF
-open_hw_manager
-connect_hw_server -url localhost:3121 -allow_non_jtag
-current_hw_target [get_hw_targets *xilinx_tcf/Xilinx/${SERIAL}*]
-open_hw_target
-foreach d [get_hw_devices] { puts "DEVICE:\$d" }
-close_hw_manager
-exit
-EOF
-
-    local result=$("$VIVADO" -mode tcl -nolog -nojournal -source "$tcl" 2>/dev/null | grep "^DEVICE:" | head -1)
-    rm -f "$tcl"
-
-    if [ -n "$result" ]; then
-        DEVICE="${result#DEVICE:}"
-        echo "$DEVICE"
-    else
-        echo "FAILED"
-        error "No device found on target $SERIAL"
     fi
 }
 
@@ -278,19 +224,14 @@ echo -e "${BOLD}  Revert FPGA to Golden Image${NC}"
 echo -e "${BOLD}======================================${NC}"
 echo ""
 
-detect_serial
-detect_device
-
-echo ""
-
-remove_drivers
 save_pcie_info
+remove_drivers
 pci_remove
 
 echo ""
-echo -n "  Booting from flash... "
+echo -n "  Booting from flash (single Vivado session)... "
 
-CMD="$VIVADO -mode batch -nolog -nojournal -source $TCL_SCRIPT -tclargs $SERIAL $DEVICE"
+CMD="$VIVADO -mode batch -nolog -nojournal -source $TCL_SCRIPT"
 
 if eval "$CMD" > /dev/null 2>&1; then
     echo "done."
@@ -301,6 +242,9 @@ else
 fi
 
 [ $HOTPLUG -eq 1 ] && pci_hotplug
+
+sudo rmmod ftdi_sio 2>/dev/null || true
+sudo rmmod usbserial 2>/dev/null || true
 
 echo ""
 info "======================================="
