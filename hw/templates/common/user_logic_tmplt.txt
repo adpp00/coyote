@@ -50,6 +50,19 @@ module design_user_logic_c{{ c_cnfg }}_{{ c_reg }} (
 {% if cnfg.en_rdma %}
     metaIntf.s                  rq_rd,
 {% endif %}
+{% if cnfg.en_tcp %}
+    // TCP/IP RAW SOCKET API
+    metaIntf.m                  tcp_listen_req,
+    metaIntf.s                  tcp_listen_rsp,
+    metaIntf.m                  tcp_open_req,
+    metaIntf.s                  tcp_open_rsp,
+    metaIntf.m                  tcp_close_req,
+    metaIntf.s                  tcp_notify,
+    metaIntf.m                  tcp_rd_pkg,
+    metaIntf.s                  tcp_rx_meta,
+    metaIntf.m                  tcp_tx_meta,
+    metaIntf.s                  tcp_tx_stat,
+{% endif %}
 {% if cnfg.en_net %}
     metaIntf.s                  rq_wr,
 {% endif %}
@@ -80,6 +93,13 @@ module design_user_logic_c{{ c_cnfg }}_{{ c_reg }} (
     // TCP/IP DATA STREAMS
     AXI4SR.s                    axis_tcp_recv [N_TCP_AXI],
     AXI4SR.m                    axis_tcp_send [N_TCP_AXI],
+
+{% endif %}
+{% if cnfg.en_nvme %}
+    // NVMe
+    metaIntf.m                  m_nvme_sq,
+    metaIntf.s                  s_nvme_cq_rsp,
+    metaIntf.s                  s_nvme_cpl,
 
 {% endif %}
 
@@ -139,8 +159,13 @@ module design_user_logic_c{{ c_cnfg }}_{{ c_reg }} (
 {% endfor %}
 {% endif %}
 {% if cnfg.en_host_networking %}
-//always_comb axis_host_networking_rx.tie_off_s(); 
-//always_comb axis_host_networkung_tx.tie_off_m(); 
+//always_comb axis_host_networking_rx.tie_off_s();
+//always_comb axis_host_networkung_tx.tie_off_m();
+{% endif %}
+{% if cnfg.en_nvme %}
+//always_comb m_nvme_sq.tie_off_m();
+//always_comb s_nvme_cq_rsp.tie_off_s();
+//always_comb s_nvme_cpl.tie_off_s();
 {% endif %}
 
 /* ---------------------------------------------------------------------- */

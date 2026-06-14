@@ -1,0 +1,69 @@
+/**
+ * This file is part of the Coyote <https://github.com/fpgasystems/Coyote>
+ *
+ * MIT Licence
+ * Copyright (c) 2021-2026, Systems Group, ETH Zurich
+ * All rights reserved.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+`timescale 1ns / 1ps
+
+import lynxTypes::*;
+
+/**
+ * @brief NVMe → bpss read submission queue priority mux
+ *
+ * Merges NVMe MMU requests (req_t with strm=STRM_NVME) into region 0's bpss_rd_sq
+ * path so the shared tlb_fsm can translate the NVMe virtual address. The NVMe
+ * source always wins; bpss reads from region 0 stall while an NVMe request is
+ * presented. This is acceptable because NVMe traffic is bursty (one MMU lookup
+ * per 4KB PRP / 8KB pair / page-list batch) compared to the continuous bpss flow.
+ */
+module nvme_bpss_mux (
+    input  logic    aclk,
+    input  logic    aresetn,
+
+    // NVMe MMU request (req_t, strm=STRM_NVME); priority source
+    metaIntf.s      s_nvme,
+
+    // Bypass (bpss) read submission queue from the user region; lower priority
+    metaIntf.s      s_bpss,
+
+    // Merged stream forwarded into mmu_top's per-region bpss_rd_sq[0]
+    metaIntf.m      m_merged
+);
+
+always_comb begin
+    if (s_nvme.valid) begin
+        m_merged.valid = 1'b1;
+        m_merged.data  = s_nvme.data;
+        s_nvme.ready   = m_merged.ready;
+        s_bpss.ready   = 1'b0;
+    end
+    else begin
+        m_merged.valid = s_bpss.valid;
+        m_merged.data  = s_bpss.data;
+        s_bpss.ready   = m_merged.ready;
+        s_nvme.ready   = 1'b0;
+    end
+end
+
+endmodule

@@ -339,7 +339,10 @@ if {$cnfg(fdev) eq "u250" || $cnfg(fdev) eq "u200"} {
 }
 
 if {$cnfg(fdev) eq "u280" || $cnfg(fdev) eq "u55c"} {
-    # Create instance: xdma_0, and set properties
+    # Create instance: xdma_0, and set properties.
+    # Only difference from upstream SCENIC: the descriptor-bypass BAR is widened from 256 MB to 16 GB so
+    # the host can map FPGA HBM through it for NVMe P2P. MSI-X (BAR_3:2) and xdma_pcie_64bit_en are left
+    # at their original values -- a larger bypass BAR does not affect MSI-X BAR placement.
     set cmd "set xdma_0 \[ create_bd_cell -type ip -vlnv xilinx.com:ip:xdma:4.1 xdma_0 ]
             set_property -dict \[ list \
               CONFIG.xdma_pcie_64bit_en {true} \
@@ -353,8 +356,8 @@ if {$cnfg(fdev) eq "u280" || $cnfg(fdev) eq "u55c"} {
               CONFIG.axi_data_width {512_bit} \
               CONFIG.axi_id_width {4} \
               CONFIG.axist_bypass_en {true} \
-              CONFIG.axist_bypass_scale {Megabytes} \
-              CONFIG.axist_bypass_size {256} \
+              CONFIG.axist_bypass_scale {Gigabytes} \
+              CONFIG.axist_bypass_size {16} \
               CONFIG.axisten_freq {250} \
               CONFIG.cfg_mgmt_if {false} \
               CONFIG.dsc_bypass_rd {[format "%04d" $bypass]} \
@@ -539,7 +542,8 @@ if {$cnfg(fdev) eq "vcu118"} {
 # Create address segments
 ########################################################################################################
   
-  create_bd_addr_seg -range 256M -offset 0x0000000000000000 [get_bd_addr_spaces xdma_0/M_AXI_BYPASS] [get_bd_addr_segs axi_main/Reg] SEG_axi_main_Reg
+  # Bypass BAR widened to 16 GB (matches axist_bypass_size above) so the host can reach FPGA HBM.
+  create_bd_addr_seg -range 16G -offset 0x0000000000000000 [get_bd_addr_spaces xdma_0/M_AXI_BYPASS] [get_bd_addr_segs axi_main/Reg] SEG_axi_main_Reg
   create_bd_addr_seg -range 1M -offset 0x00000000 [get_bd_addr_spaces xdma_0/M_AXI_LITE] [get_bd_addr_segs axi_cnfg/Reg] SEG_axi_cnfg_Reg
 
   # Restore current instance

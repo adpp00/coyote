@@ -401,8 +401,12 @@ always_comb begin
         (tlb_data_lup[i][0+:TAG_BITS] == tag_ext[1]) && //TLB.addr[PG_BITS+TLB_ORDER+:TAG_BITS]) && // tag hit
         (tlb_data_lup[i][TAG_BITS+:PID_BITS] == pid_ext[1]) && //TLB.pid) && // pid hit
 `ifdef EN_STRM
-`ifdef EN_MEM        
-        (tlb_data_lup[i][TAG_BITS+PID_BITS+:STRM_BITS] == strm_ext[1]) && //TLB.strm) && // strm hit
+`ifdef EN_MEM
+`ifdef EN_NVME
+        ((strm_ext[1] == STRM_NVME) || (tlb_data_lup[i][TAG_BITS+PID_BITS+:STRM_BITS] == strm_ext[1])) &&
+`else
+        (tlb_data_lup[i][TAG_BITS+PID_BITS+:STRM_BITS] == strm_ext[1]) &&
+`endif
 `endif
 `endif
         tlb_data_lup[i][TLB_VAL_BIT_OFFS];

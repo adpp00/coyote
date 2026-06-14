@@ -281,6 +281,8 @@ extern bool en_hmm;
 #define EN_RDMA_SHIFT 0x0
 #define EN_TCP_MASK 0x1
 #define EN_TCP_SHIFT 0x0
+#define EN_NVME_MASK 0x1
+#define EN_NVME_SHIFT 0x0
 #define QSFP_MASK 0x2
 #define QSFP_SHIFT 0x1
 
@@ -337,11 +339,19 @@ extern bool en_hmm;
 #define TLB_VADDR_RANGE 48
 #define TLB_PADDR_RANGE 44
 #define PID_SIZE 6
-#define STRM_SIZE 2
+#define STRM_SIZE 3  // must match HW STRM_BITS (lynx_pkg); SCENIC bumped 2->3, drives TLB valid/phys bit offsets
 #define MAX_N_MAP_PAGES 256  
 #define MAX_N_MAP_HUGE_PAGES 256
 #define MAX_N_REGIONS 16
 #define BUFF_NEEDS_EXP_SYNC_RET_CODE 99
+
+// NVMe constants
+// FPGA NVMe config registers are mapped in the upper half of the 32KB shell config window
+// (axi_cnfg is sliced into shell_slave [0x0000..0x3FFF] and nvme_cnfg_slave [0x4000..0x7FFF]
+// by axil_demux_2 in shell_top); see nvme_cnfg_slave.sv for the AXI-Lite register layout.
+#define FPGA_NVME_CNFG_OFFS 0x00004000
+#define FPGA_NVME_CNFG_SIZE 0x1000
+#define MAX_NVME_DEVICES 16
 
 // Card memory constants
 // On UltraScale+ devices, support up to 1024 * 1024 chunks of 4 KB
@@ -430,6 +440,9 @@ extern bool en_hmm;
 #define IOCTL_SHELL_NET_STATS _IOR('F', 17, unsigned long)
 #define IOCTL_SET_NOTIFICATION_PROCESSED _IOR('F', 18, unsigned long)
 #define IOCTL_GET_NOTIFICATION_VALUE _IOR('F', 19, unsigned long)
+#define IOCTL_NVME_INIT _IOWR('F', 20, unsigned long)
+#define IOCTL_NVME_CLOSE _IOW('F', 21, unsigned long)
+#define IOCTL_NVME_IS_REGISTERED _IOWR('F', 22, unsigned long)
 
 // Reconfiguration IOCTL calls; see reconfig_ops.c for more details
 #define IOCTL_ALLOC_HOST_RECONFIG_MEM _IOW('P', 1, unsigned long)
@@ -562,13 +575,14 @@ struct cyt_shell_cnfg_regs {
     uint64_t n_regions;
     uint64_t ctrl_cnfg;
     uint64_t mem_cnfg;
-    uint64_t pr_cnfg; 
-    uint64_t shell_pblock_cnfg; 
+    uint64_t pr_cnfg;
+    uint64_t shell_pblock_cnfg;
     uint64_t rdma_cnfg;
-    uint64_t tcp_cnfg; 
+    uint64_t tcp_cnfg;
     uint64_t reconfig_dcpl_app_set;
     uint64_t reconfig_dcpl_app_clr;
-    uint64_t reserved_0[21];
+    uint64_t nvme_cnfg;
+    uint64_t reserved_0[20];
     uint64_t net_ip;
     uint64_t net_mac; 
     uint64_t tcp_offs; 
@@ -620,6 +634,27 @@ struct vfpga_cnfg_regs {
     uint64_t sync_len;
     uint64_t sync_stat;
     // Rest is user space
+} __packed;
+
+/**
+ * @brief NVMe FPGA config registers; see nvme_cnfg_slave.sv for more details and register layout
+ * Mapped at SHELL BAR + FPGA_NVME_CNFG_OFFS (0x8000); single instance shared by all regions
+ * Used to push per-device info (LBA format, doorbell address, etc) and per-region LBA permissions to the FPGA
+ */
+struct nvme_fpga_cnfg_regs {
+    uint64_t fpga_bar_base;         // 0x00 - FPGA PCIe BAR base (for SQE PRP fields)
+    uint64_t reserved_0;            // 0x08
+    uint64_t dev_id;                // 0x10 - staging: device ID (0..MAX_NVME_DEVICES-1)
+    uint64_t nsid;                  // 0x18 - staging: namespace ID
+    uint64_t lbaf;                  // 0x20 - staging: LBA format index (log2 sector bytes)
+    uint64_t nsze;                  // 0x28 - staging: namespace size in LBAs
+    uint64_t doorbell_base;         // 0x30 - staging: SQ doorbell phys address
+    uint64_t valid_nvme_info;       // 0x38 - W1S: bit[0]=commit device info, bit[1]=reset queues
+    uint64_t perm_region_id;        // 0x40 - staging: region ID
+    uint64_t perm_dev_id;           // 0x48 - staging: device ID
+    uint64_t perm_lba_offset;       // 0x50 - staging: allowed LBA base
+    uint64_t perm_lba_size;         // 0x58 - staging: allowed LBA count
+    uint64_t perm_valid;            // 0x60 - W1S: bit[0]=commit permission
 } __packed;
 
 
@@ -1143,6 +1178,118 @@ struct reconfig_dev {
     struct reconfig_buff_metadata curr_buff;
 };
 
+/**
+ * @brief Per-NVMe-SSD context; abstracts a single NVMe device claimed by the Coyote driver
+ *
+ * The driver takes over the NVMe device via PCI sysfs (driver_override), sets up an admin queue
+ * via DMA-coherent buffers, enables the controller, identifies the namespace and creates an
+ * I/O queue whose SQ/CQ memory lives in FPGA BRAM (so the SSD DMAs SQEs and CQEs to/from FPGA).
+ * One nvme_dev_ctx exists per active NVMe device (up to MAX_NVME_DEVICES).
+ */
+struct nvme_dev_ctx {
+    /// Underlying PCI device claimed by the driver
+    struct pci_dev *pdev;
+
+    /// BAR0 (controller registers) ioremap; bar0_phys and bar0_size are kept for cleanup
+    void __iomem   *bar0;
+    uint64_t        bar0_phys;
+    size_t          bar0_size;
+
+    /// IOVA mapping of the FPGA shell BAR through this NVMe device's DMA API; used in PRP entries
+    /// so that NVMe TLPs targeting the FPGA traverse the host IOMMU correctly (no-op without IOMMU).
+    dma_addr_t      iova_base;
+    size_t          iova_size;
+
+    /// IOVA mapping of the SSD's BAR0 (its doorbell registers) through the FPGA's DMA API, so the
+    /// FPGA's outbound P2P doorbell write (FPGA->SSD MMIO) carries a bus address valid under the
+    /// FPGA-side IOMMU. This is the FPGA->SSD mirror of iova_base (SSD->FPGA), and the same idea as
+    /// the GPU P2P path (vfpga_gup.c) which maps a peer's resource into the FPGA's bus address space.
+    /// No-op without an IOMMU (dma_map_resource returns the raw PA). db_iova_size==0 => nothing to unmap.
+    dma_addr_t      db_iova;
+    size_t          db_iova_size;
+
+    /// Admin Submission/Completion Queues (host-allocated, DMA-coherent)
+    dma_addr_t      asq_dma;
+    dma_addr_t      acq_dma;
+    void           *asq_virt;
+    void           *acq_virt;
+    uint16_t        asq_tail;
+    uint16_t        acq_head;
+    uint8_t         acq_phase;
+    uint16_t        admin_cid;
+
+    /// Doorbell stride in bytes (from NVMe CAP register)
+    uint32_t        db_stride;
+
+    /// Active namespace identified during init
+    uint32_t        nsid;
+    uint32_t        lba_size;
+    uint64_t        nsze;
+    uint32_t        mdts;
+
+    bool            initialized;
+    struct mutex    lock;
+};
+
+/**
+ * @brief Per-device state tracked by the NVMe manager (global, shared across regions)
+ */
+struct nvme_device_state {
+    struct nvme_dev_ctx ctx;
+    uint32_t dev_id;                    /// 0..MAX_NVME_DEVICES-1; matches FPGA dev_id tag
+    char     bdf[16];                   /// PCI BDF string (informational)
+    uint32_t nsid;
+    uint64_t next_free_lba;             /// Bump allocator for region LBA ranges
+    uint16_t io_qid;                    /// NVMe I/O queue ID (1 + dev_id)
+    uint64_t io_sq_phys;                /// FPGA BRAM SQ phys address for this device
+    uint64_t io_cq_phys;                /// FPGA BRAM CQ phys address for this device
+    bool     active;
+};
+
+/**
+ * @brief Per-(region, device) LBA allocation; tracks the byte range mapped from each NVMe device into each vFPGA region
+ */
+struct nvme_region_alloc {
+    uint32_t dev_id;
+    uint64_t lba_offset;
+    uint64_t lba_count;
+    bool     active;
+};
+
+/**
+ * @brief Global NVMe device manager; allocated once per bus_driver_data when EN_NVME is set
+ */
+struct nvme_manager {
+    struct nvme_device_state devices[MAX_NVME_DEVICES];
+    int num_devices;
+    struct nvme_region_alloc region_allocs[MAX_N_REGIONS][MAX_NVME_DEVICES];
+    struct mutex lock;
+};
+
+/**
+ * @brief NVMe initialization IOCTL request/response; passed to IOCTL_NVME_INIT
+ *
+ * Input fields: bdf, nsid, size (requested byte range in the namespace)
+ * Output fields: result, dev_id, lba_size, nsze, lba_offset, lba_count, doorbell addresses, mdts
+ */
+struct nvme_init_ioctl {
+    // Input
+    char     bdf[16];                   /// PCI BDF string of the NVMe device to claim
+    uint32_t nsid;                      /// Namespace to use
+    uint64_t size;                      /// Requested allocation size, bytes
+
+    // Output
+    int32_t  result;                    /// 0 on success, negative errno otherwise
+    uint32_t dev_id;                    /// Assigned FPGA dev_id
+    uint32_t lba_size;
+    uint64_t nsze;                      /// Total namespace size, in LBAs
+    uint64_t lba_offset;
+    uint64_t lba_count;
+    uint64_t sq_doorbell_addr;          /// SQ doorbell BAR0 offset (for FPGA cnfg)
+    uint64_t cq_doorbell_addr;          /// CQ doorbell BAR0 offset (= sq + 4)
+    uint32_t mdts;                      /// Maximum data transfer size (bytes)
+} __packed;
+
 /// Placeholder for an empty kobject, used to avoid NULL pointer dereferences when removing the sysfs
 static const struct kobject cyt_kobj_empty;
 
@@ -1219,7 +1366,16 @@ struct bus_driver_data {
 
     /// Pointer to the shell configuration registers; memory mapped during driver initialization
     volatile struct cyt_shell_cnfg_regs *shell_cnfg;
-    
+
+    /// True if the NVMe stack is enabled in the loaded bitstream; read from shell_cnfg->nvme_cnfg
+    int en_nvme;
+
+    /// Pointer to the FPGA NVMe config registers (single instance at SHELL_BAR + FPGA_NVME_CNFG_OFFS); NULL if EN_NVME is disabled
+    volatile struct nvme_fpga_cnfg_regs *nvme_cnfg_regs;
+
+    /// Global NVMe device manager; allocated on driver init when en_nvme is true
+    struct nvme_manager *nvme_mgr;
+
     /*
      * The following are pointers to the vFPGA and reconfiguration devices.
      * While this may seem odd, since the vFPGA and reconfiguration devices

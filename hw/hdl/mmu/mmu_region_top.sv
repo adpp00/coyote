@@ -49,6 +49,10 @@ module mmu_region_top #(
 	metaIntf.s 						    s_bpss_rd_sq,
 	metaIntf.s						    s_bpss_wr_sq,
 
+`ifdef EN_NVME
+	metaIntf.m                          m_nvme_rd_rsp,
+`endif
+
 `ifdef EN_STRM
 	// Stream DMAs
     dmaIntf.m                           m_rd_HDMA,
@@ -101,8 +105,10 @@ localparam integer PHY_L_BITS = PADDR_BITS - PG_L_BITS;
 localparam integer PHY_S_BITS = PADDR_BITS - PG_S_BITS;
 localparam integer TAG_L_BITS = VADDR_BITS - HASH_L_BITS - PG_L_BITS;
 localparam integer TAG_S_BITS = VADDR_BITS - HASH_S_BITS - PG_S_BITS;
-localparam integer TLB_L_DATA_BITS = TAG_L_BITS + PID_BITS + 2 + PHY_L_BITS + HPID_BITS;
-localparam integer TLB_S_DATA_BITS = TAG_S_BITS + PID_BITS + 2 + PHY_S_BITS + HPID_BITS;
+// strm field + valid bit = STRM_BITS + 1, matching tlb_controller / tlb_fsm packing. (Was a stale
+// literal 2 from when STRM_BITS was 2; not updated when STRM_BITS became 3, which truncated HPID.)
+localparam integer TLB_L_DATA_BITS = TAG_L_BITS + PID_BITS + STRM_BITS + 1 + PHY_L_BITS + HPID_BITS;
+localparam integer TLB_S_DATA_BITS = TAG_S_BITS + PID_BITS + STRM_BITS + 1 + PHY_S_BITS + HPID_BITS;
 
 // Tlb interfaces
 tlbIntf #(.TLB_INTF_DATA_BITS(TLB_L_DATA_BITS)) rd_lTlb ();
@@ -120,27 +126,30 @@ metaIntf #(.STYPE(req_t)) rd_req (.*);
 metaIntf #(.STYPE(req_t)) wr_req (.*);
 
 // ----------------------------------------------------------------------------------------
-// Mutex 
+// Mutex
 // ----------------------------------------------------------------------------------------
-logic [1:0] mutex;
+logic [2:0] mutex;
 logic rd_lock, wr_lock;
 logic rd_unlock, wr_unlock;
 
+localparam logic [1:0] OWNER_BPSS_RD = 2'd0;
+localparam logic [1:0] OWNER_BPSS_WR = 2'd1;
+
 always_ff @(posedge aclk) begin
-	if(aresetn == 1'b0) begin
-		mutex <= 2'b01;
-	end else begin
-		if(mutex[0] == 1'b1) begin // free
-			if(rd_lock)
-				mutex <= 2'b00;
-			else if(wr_lock)
-				mutex <= 2'b10;
+	if(!aresetn) begin
+		mutex <= {OWNER_BPSS_RD, 1'b1};
+	end
+	else begin
+		if(mutex[0]) begin // free
+			if(rd_lock)             mutex <= {OWNER_BPSS_RD, 1'b0};
+			else if(wr_lock)        mutex <= {OWNER_BPSS_WR, 1'b0};
 		end
 		else begin // locked
-			if((mutex[1] == 1'b0) && rd_unlock)
-				mutex <= 2'b01;
-			else if (wr_unlock)
-				mutex <= 2'b11;
+			case (mutex[2:1])
+				OWNER_BPSS_RD: if(rd_unlock)       mutex[0] <= 1'b1;
+				OWNER_BPSS_WR: if(wr_unlock)       mutex[0] <= 1'b1;
+				default:                           mutex[0] <= 1'b1;
+			endcase
 		end
 	end
 end
@@ -274,6 +283,9 @@ tlb_fsm #(
     .m_card_done(m_rd_card_done),
     .m_DDMA(rd_DDMA_fsm),
 `endif
+`ifdef EN_NVME
+    .m_nvme_rsp(m_nvme_rd_rsp),
+`endif
     .s_req(s_bpss_rd_sq),
 
     .m_pfault(m_rd_pfault_irq),
@@ -287,6 +299,12 @@ tlb_fsm #(
 	.unlock(rd_unlock),
 	.mutex(mutex)
 );
+
+`ifdef EN_NVME
+// NVMe is a read-only stream; the write FSM exposes the same m_nvme_rsp port but never drives valid traffic
+metaIntf #(.STYPE(nvme_mmu_rsp_t)) wr_nvme_rsp ();
+assign wr_nvme_rsp.ready = 1'b1;
+`endif
 
 // TLB wr FSM
 tlb_fsm #(
@@ -304,6 +322,9 @@ tlb_fsm #(
 `ifdef EN_MEM
     .m_card_done(m_wr_card_done),
     .m_DDMA(wr_DDMA_fsm),
+`endif
+`ifdef EN_NVME
+    .m_nvme_rsp(wr_nvme_rsp),
 `endif
     .s_req(s_bpss_wr_sq),
 
@@ -400,6 +421,7 @@ tlb_fsm #(
 `endif
 
 `endif
+
 
 /////////////////////////////////////////////////////////////////////////////
 // DEBUG

@@ -97,9 +97,16 @@ module design_dynamic_top #(
     AXI4S.m                                     m_axis_tcp,
 
 {% endif %}
+{% if cnfg.en_nvme %}
+    // NVMe AXI interfaces (from BD)
+    AXI4L.s                                     s_axi_nvme_cnfg,
+    AXI4.s                                      s_axi_nvme_prp,
+    AXI4.s                                      s_axi_nvme_sq,
+    AXI4.s                                      s_axi_nvme_cq,
+{% endif %}
 {% if cnfg.en_host_networking %}
-    AXI4S.m                                     m_axis_host_tx, 
-    AXI4S.s                                     s_axis_host_rx, 
+    AXI4S.m                                     m_axis_host_tx,
+    AXI4S.s                                     s_axis_host_rx,
 {% endif %}
 {% if cnfg.en_sniffer %}
     // Sniffer
@@ -231,15 +238,26 @@ module design_dynamic_top #(
     dmaIntf wr_HDMA_host();
     
     dma_reg_array #(.N_STAGES(N_REG_DYN_HOST_S0)) inst_host_dma_reg_arr_s0_rd (.aclk(aclk), .aresetn(aresetn), .s_req(rd_HDMA_host), .m_req(m_host_dma_rd_req));
+{% if cnfg.en_nvme %}
+    // NVMe doorbell DMA is merged into the host write DMA by inst_nvme_host_arb (NVMe section below).
+    dmaIntf wr_HDMA_merged();
+    dma_reg_array #(.N_STAGES(N_REG_DYN_HOST_S0)) inst_host_dma_reg_arr_s0_wr (.aclk(aclk), .aresetn(aresetn), .s_req(wr_HDMA_merged), .m_req(m_host_dma_wr_req));
+{% else %}
     dma_reg_array #(.N_STAGES(N_REG_DYN_HOST_S0)) inst_host_dma_reg_arr_s0_wr (.aclk(aclk), .aresetn(aresetn), .s_req(wr_HDMA_host), .m_req(m_host_dma_wr_req));
-    
-    // Slice 0 
+{% endif %}
+
+    // Slice 0
     // ----------------------------------------------------------------------
     AXI4S axis_host_in_s0();
     AXI4S axis_host_out_s0();
 
     axis_reg_array #(.N_STAGES(N_REG_DYN_HOST_S0)) inst_host_axis_reg_arr_s0_in  (.aclk(aclk), .aresetn(aresetn), .s_axis(s_axis_host),      .m_axis(axis_host_in_s0));
+{% if cnfg.en_nvme %}
+    AXI4S axis_host_out_merged(.aclk(aclk));
+    axis_reg_array #(.N_STAGES(N_REG_DYN_HOST_S0)) inst_host_axis_reg_arr_s0_out (.aclk(aclk), .aresetn(aresetn), .s_axis(axis_host_out_merged), .m_axis(m_axis_host));
+{% else %}
     axis_reg_array #(.N_STAGES(N_REG_DYN_HOST_S0)) inst_host_axis_reg_arr_s0_out (.aclk(aclk), .aresetn(aresetn), .s_axis(axis_host_out_s0), .m_axis(m_axis_host));
+{% endif %}
     
     // Multiplexing 
     // ----------------------------------------------------------------------
@@ -681,21 +699,27 @@ module design_dynamic_top #(
 {% endif %}
 {% if cnfg.en_tcp %}
     // ================-----------------------------------------------------------------
-    // TCP/IP
+    // TCP/IP (raw socket API)
     // ================-----------------------------------------------------------------
-    
+
+    // mmu_top host control-plane signals (legacy open_port/open_conn). The new
+    // tcp_arbiter does not consume these, so they are tied off here. mmu_top
+    // still expects them on its port list. STYPEs mirror mmu_top's internal
+    // array declarations.
+    metaIntf #(.STYPE(tcp_listen_req_r_t)) open_port_cmd ();
+    metaIntf #(.STYPE(tcp_listen_rsp_r_t)) open_port_sts ();
+    metaIntf #(.STYPE(tcp_open_req_r_t))   open_conn_cmd ();
+    metaIntf #(.STYPE(tcp_open_rsp_r_t))   open_conn_sts ();
+
+    assign open_port_cmd.ready = 1'b1;
+    assign open_conn_cmd.ready = 1'b1;
+    assign open_port_sts.valid = 1'b0;
+    assign open_port_sts.data  = '0;
+    assign open_conn_sts.valid = 1'b0;
+    assign open_conn_sts.data  = '0;
+
     // Slice 0
     // ----------------------------------------------------------------------
-    metaIntf #(.STYPE(tcp_listen_req_r_t)) open_port_cmd();
-    metaIntf #(.STYPE(tcp_listen_rsp_t)) open_port_sts();
-    metaIntf #(.STYPE(tcp_listen_req_r_t)) open_conn_cmd();
-    metaIntf #(.STYPE(tcp_listen_rsp_r_t)) open_conn_sts();
-    
-    metaIntf #(.STYPE(tcp_listen_req_r_t)) open_port_cmd_s0();
-    metaIntf #(.STYPE(tcp_listen_rsp_t)) open_port_sts_s0();
-    metaIntf #(.STYPE(tcp_listen_req_r_t)) open_conn_cmd_s0();
-    metaIntf #(.STYPE(tcp_listen_rsp_r_t)) open_conn_sts_s0();
-
     metaIntf #(.STYPE(tcp_listen_req_t)) tcp_listen_req_s0();
     metaIntf #(.STYPE(tcp_listen_rsp_t)) tcp_listen_rsp_s0();
     metaIntf #(.STYPE(tcp_open_req_t)) tcp_open_req_s0();
@@ -708,17 +732,12 @@ module design_dynamic_top #(
     metaIntf #(.STYPE(tcp_tx_stat_t)) tcp_tx_stat_s0 ();
     AXI4S #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_tcp_in_s0 ();
     AXI4S #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_tcp_out_s0 ();
-    
-    tcp_slice_array_dyn #(
+
+    tcp_slice_array_net #(
         .N_STAGES(N_REG_DYN_NET_S0)
     ) inst_tcp_slice_array (
         .aclk(aclk),
         .aresetn(aresetn),
-        
-        .s_tcp_open_port_cmd_n(open_port_cmd),
-        .m_tcp_open_port_sts_n(open_port_sts),
-        .s_tcp_open_conn_cmd_n(open_conn_cmd),
-        .m_tcp_open_conn_sts_n(open_conn_sts),
 
         .m_tcp_listen_req_n(m_tcp_listen_req),
         .s_tcp_listen_rsp_n(s_tcp_listen_rsp),
@@ -733,11 +752,6 @@ module design_dynamic_top #(
         .s_axis_tcp_rx_n(s_axis_tcp),
         .m_axis_tcp_tx_n(m_axis_tcp),
 
-        .m_tcp_open_port_cmd_n(open_port_cmd_s0),
-        .s_tcp_open_port_sts_n(open_port_sts_s0),
-        .m_tcp_open_conn_cmd_n(open_conn_cmd_s0),
-        .s_tcp_open_conn_sts_n(open_conn_sts_s0),
-
         .s_tcp_listen_req_u(tcp_listen_req_s0),
         .m_tcp_listen_rsp_u(tcp_listen_rsp_s0),
         .s_tcp_open_req_u(tcp_open_req_s0),
@@ -750,12 +764,20 @@ module design_dynamic_top #(
         .m_tcp_tx_stat_u(tcp_tx_stat_s0),
         .m_axis_tcp_rx_u(axis_tcp_in_s0),
         .s_axis_tcp_tx_u(axis_tcp_out_s0)
-    );		
+    );
 
-    // Arbitration
+    // Arbitration (raw socket API fanned out per-region)
     // ----------------------------------------------------------------------
-    metaIntf #(.STYPE(req_t)) tcp_rq_s1 [N_REGIONS]();
-    metaIntf #(.STYPE(req_t)) tcp_sq_s1 [N_REGIONS]();
+    metaIntf #(.STYPE(tcp_listen_req_t)) tcp_listen_req_s1[N_REGIONS]();
+    metaIntf #(.STYPE(tcp_listen_rsp_t)) tcp_listen_rsp_s1[N_REGIONS]();
+    metaIntf #(.STYPE(tcp_open_req_t)) tcp_open_req_s1[N_REGIONS]();
+    metaIntf #(.STYPE(tcp_open_rsp_t)) tcp_open_rsp_s1[N_REGIONS]();
+    metaIntf #(.STYPE(tcp_close_req_t)) tcp_close_req_s1 [N_REGIONS]();
+    metaIntf #(.STYPE(tcp_notify_t)) tcp_notify_s1 [N_REGIONS]();
+    metaIntf #(.STYPE(tcp_rd_pkg_t)) tcp_rd_pkg_s1 [N_REGIONS]();
+    metaIntf #(.STYPE(tcp_rx_meta_t)) tcp_rx_meta_s1 [N_REGIONS]();
+    metaIntf #(.STYPE(tcp_tx_meta_t)) tcp_tx_meta_s1 [N_REGIONS]();
+    metaIntf #(.STYPE(tcp_tx_stat_t)) tcp_tx_stat_s1 [N_REGIONS]();
     AXI4S #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_tcp_in_s1 [N_REGIONS]();
     AXI4S #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_tcp_out_s1 [N_REGIONS]();
 
@@ -776,22 +798,34 @@ module design_dynamic_top #(
         .s_axis_tcp_rx_net(axis_tcp_in_s0),
         .m_axis_tcp_tx_net(axis_tcp_out_s0),
 
-        .s_tcp_listen_req_host(tcp_open_port_cmd_s0),
-        .m_tcp_listen_rsp_host(tcp_open_port_sts_s0),
-        .s_tcp_open_req_host(tcp_open_conn_cmd_s0),
-        .m_tcp_open_rsp_host(tcp_open_conn_sts_s0),
-        .m_tcp_rx_meta_user(tcp_rq_s1),
-        .s_tcp_tx_meta_user(tcp_sq_s1),
+        .s_tcp_listen_req_user(tcp_listen_req_s1),
+        .m_tcp_listen_rsp_user(tcp_listen_rsp_s1),
+        .s_tcp_open_req_user(tcp_open_req_s1),
+        .m_tcp_open_rsp_user(tcp_open_rsp_s1),
+        .s_tcp_close_req_user(tcp_close_req_s1),
+        .m_tcp_notify_user(tcp_notify_s1),
+        .s_tcp_rd_pkg_user(tcp_rd_pkg_s1),
+        .m_tcp_rx_meta_user(tcp_rx_meta_s1),
+        .s_tcp_tx_meta_user(tcp_tx_meta_s1),
+        .m_tcp_tx_stat_user(tcp_tx_stat_s1),
         .m_axis_tcp_rx_user(axis_tcp_in_s1),
         .s_axis_tcp_tx_user(axis_tcp_out_s1)
     );
 
     // Clock crossing (if enabled)
     // ----------------------------------------------------------------------
-    metaIntf #(.STYPE(req_t)) tcp_rq_s2 [N_REGIONS]();
-    metaIntf #(.STYPE(req_t)) tcp_sq_s2 [N_REGIONS]();
-    AXI4SR #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_tcp_in_s2 [N_REGIONS]();
-    AXI4SR #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_tcp_out_s2 [N_REGIONS]();
+    metaIntf #(.STYPE(tcp_listen_req_t)) tcp_listen_req_s2[N_REGIONS]();
+    metaIntf #(.STYPE(tcp_listen_rsp_t)) tcp_listen_rsp_s2[N_REGIONS]();
+    metaIntf #(.STYPE(tcp_open_req_t)) tcp_open_req_s2[N_REGIONS]();
+    metaIntf #(.STYPE(tcp_open_rsp_t)) tcp_open_rsp_s2[N_REGIONS]();
+    metaIntf #(.STYPE(tcp_close_req_t)) tcp_close_req_s2 [N_REGIONS]();
+    metaIntf #(.STYPE(tcp_notify_t)) tcp_notify_s2 [N_REGIONS]();
+    metaIntf #(.STYPE(tcp_rd_pkg_t)) tcp_rd_pkg_s2 [N_REGIONS]();
+    metaIntf #(.STYPE(tcp_rx_meta_t)) tcp_rx_meta_s2 [N_REGIONS]();
+    metaIntf #(.STYPE(tcp_tx_meta_t)) tcp_tx_meta_s2 [N_REGIONS]();
+    metaIntf #(.STYPE(tcp_tx_stat_t)) tcp_tx_stat_s2 [N_REGIONS]();
+    AXI4S #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_tcp_in_s2 [N_REGIONS]();
+    AXI4S #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_tcp_out_s2 [N_REGIONS]();
 
 {% if cnfg.en_uclk %}
     // Cross to UCLK
@@ -802,13 +836,29 @@ module design_dynamic_top #(
             .aclk(uclk),
             .aresetn(uresetn),
 
-            .s_tcp_rq_nclk(tcp_rq_s1[i]),
-            .m_tcp_sq_nclk(tcp_sq_s1[i]),
+            .m_tcp_listen_req_nclk(tcp_listen_req_s1[i]),
+            .s_tcp_listen_rsp_nclk(tcp_listen_rsp_s1[i]),
+            .m_tcp_open_req_nclk(tcp_open_req_s1[i]),
+            .s_tcp_open_rsp_nclk(tcp_open_rsp_s1[i]),
+            .m_tcp_close_req_nclk(tcp_close_req_s1[i]),
+            .s_tcp_notify_nclk(tcp_notify_s1[i]),
+            .m_tcp_rd_pkg_nclk(tcp_rd_pkg_s1[i]),
+            .s_tcp_rx_meta_nclk(tcp_rx_meta_s1[i]),
+            .m_tcp_tx_meta_nclk(tcp_tx_meta_s1[i]),
+            .s_tcp_tx_stat_nclk(tcp_tx_stat_s1[i]),
             .s_axis_tcp_rx_nclk(axis_tcp_in_s1[i]),
             .m_axis_tcp_tx_nclk(axis_tcp_out_s1[i]),
 
-            .m_tcp_rq_aclk(tcp_rq_s2[i]),
-            .s_tcp_sq_aclk(tcp_sq_s2[i]),
+            .s_tcp_listen_req_aclk(tcp_listen_req_s2[i]),
+            .m_tcp_listen_rsp_aclk(tcp_listen_rsp_s2[i]),
+            .s_tcp_open_req_aclk(tcp_open_req_s2[i]),
+            .m_tcp_open_rsp_aclk(tcp_open_rsp_s2[i]),
+            .s_tcp_close_req_aclk(tcp_close_req_s2[i]),
+            .m_tcp_notify_aclk(tcp_notify_s2[i]),
+            .s_tcp_rd_pkg_aclk(tcp_rd_pkg_s2[i]),
+            .m_tcp_rx_meta_aclk(tcp_rx_meta_s2[i]),
+            .s_tcp_tx_meta_aclk(tcp_tx_meta_s2[i]),
+            .m_tcp_tx_stat_aclk(tcp_tx_stat_s2[i]),
             .m_axis_tcp_rx_aclk(axis_tcp_in_s2[i]),
             .s_axis_tcp_tx_aclk(axis_tcp_out_s2[i])
         );
@@ -817,20 +867,36 @@ module design_dynamic_top #(
 {% else %}
     // No crossing
     for(genvar i = 0; i < N_REGIONS; i++) begin
-        `META_ASSIGN(tcp_0_rq_s1[i], tcp_0_rq_s2[i])
-        `META_ASSIGN(tcp_0_sq_s2[i], tcp_0_sq_s1[i])
-        `AXISR_ASSIGN(axis_tcp_0_in_s1[i], axis_tcp_0_in_s2[i])
-        `AXISR_ASSIGN(axis_tcp_0_out_s2[i], axis_tcp_0_out_s1[i])
+        `META_ASSIGN(tcp_listen_req_s2[i], tcp_listen_req_s1[i])
+        `META_ASSIGN(tcp_listen_rsp_s1[i], tcp_listen_rsp_s2[i])
+        `META_ASSIGN(tcp_open_req_s2[i], tcp_open_req_s1[i])
+        `META_ASSIGN(tcp_open_rsp_s1[i], tcp_open_rsp_s2[i])
+        `META_ASSIGN(tcp_close_req_s2[i], tcp_close_req_s1[i])
+        `META_ASSIGN(tcp_notify_s1[i], tcp_notify_s2[i])
+        `META_ASSIGN(tcp_rd_pkg_s2[i], tcp_rd_pkg_s1[i])
+        `META_ASSIGN(tcp_rx_meta_s1[i], tcp_rx_meta_s2[i])
+        `META_ASSIGN(tcp_tx_meta_s2[i], tcp_tx_meta_s1[i])
+        `META_ASSIGN(tcp_tx_stat_s1[i], tcp_tx_stat_s2[i])
+        `AXIS_ASSIGN(axis_tcp_in_s1[i], axis_tcp_in_s2[i])
+        `AXIS_ASSIGN(axis_tcp_out_s2[i], axis_tcp_out_s1[i])
     end
 
-{% endif %}	
+{% endif %}
 
     // Slice 1
     // ----------------------------------------------------------------------
-    metaIntf #(.STYPE(req_t)) tcp_rq_s3 [N_REGIONS]();
-    metaIntf #(.STYPE(req_t)) tcp_sq_s3 [N_REGIONS]();
-    AXI4SR #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_tcp_in_s3 [N_REGIONS]();
-    AXI4SR #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_tcp_out_s3 [N_REGIONS]();
+    metaIntf #(.STYPE(tcp_listen_req_t)) tcp_listen_req_s3[N_REGIONS]();
+    metaIntf #(.STYPE(tcp_listen_rsp_t)) tcp_listen_rsp_s3[N_REGIONS]();
+    metaIntf #(.STYPE(tcp_open_req_t)) tcp_open_req_s3[N_REGIONS]();
+    metaIntf #(.STYPE(tcp_open_rsp_t)) tcp_open_rsp_s3[N_REGIONS]();
+    metaIntf #(.STYPE(tcp_close_req_t)) tcp_close_req_s3 [N_REGIONS]();
+    metaIntf #(.STYPE(tcp_notify_t)) tcp_notify_s3 [N_REGIONS]();
+    metaIntf #(.STYPE(tcp_rd_pkg_t)) tcp_rd_pkg_s3 [N_REGIONS]();
+    metaIntf #(.STYPE(tcp_rx_meta_t)) tcp_rx_meta_s3 [N_REGIONS]();
+    metaIntf #(.STYPE(tcp_tx_meta_t)) tcp_tx_meta_s3 [N_REGIONS]();
+    metaIntf #(.STYPE(tcp_tx_stat_t)) tcp_tx_stat_s3 [N_REGIONS]();
+    AXI4S #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_tcp_in_s3 [N_REGIONS]();
+    AXI4S #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_tcp_out_s3 [N_REGIONS]();
 
     for(genvar i = 0; i < N_REGIONS; i++) begin
         tcp_slice_array_ul #(
@@ -843,30 +909,62 @@ module design_dynamic_top #(
             .aclk(aclk),
             .aresetn(aresetn),
 {% endif %}
-            
-            .s_tcp_rq_n(tcp_rq_s2[i]),
-            .m_tcp_sq_n(tcp_sq_s2[i]),
+
+            .m_tcp_listen_req_n(tcp_listen_req_s2[i]),
+            .s_tcp_listen_rsp_n(tcp_listen_rsp_s2[i]),
+            .m_tcp_open_req_n(tcp_open_req_s2[i]),
+            .s_tcp_open_rsp_n(tcp_open_rsp_s2[i]),
+            .m_tcp_close_req_n(tcp_close_req_s2[i]),
+            .s_tcp_notify_n(tcp_notify_s2[i]),
+            .m_tcp_rd_pkg_n(tcp_rd_pkg_s2[i]),
+            .s_tcp_rx_meta_n(tcp_rx_meta_s2[i]),
+            .m_tcp_tx_meta_n(tcp_tx_meta_s2[i]),
+            .s_tcp_tx_stat_n(tcp_tx_stat_s2[i]),
             .s_axis_tcp_rx_n(axis_tcp_in_s2[i]),
             .m_axis_tcp_tx_n(axis_tcp_out_s2[i]),
 
-            .m_tcp_rq_u(tcp_rq_s3[i]),
-            .s_tcp_sq_u(tcp_sq_s3[i]),
+            .s_tcp_listen_req_u(tcp_listen_req_s3[i]),
+            .m_tcp_listen_rsp_u(tcp_listen_rsp_s3[i]),
+            .s_tcp_open_req_u(tcp_open_req_s3[i]),
+            .m_tcp_open_rsp_u(tcp_open_rsp_s3[i]),
+            .s_tcp_close_req_u(tcp_close_req_s3[i]),
+            .m_tcp_notify_u(tcp_notify_s3[i]),
+            .s_tcp_rd_pkg_u(tcp_rd_pkg_s3[i]),
+            .m_tcp_rx_meta_u(tcp_rx_meta_s3[i]),
+            .s_tcp_tx_meta_u(tcp_tx_meta_s3[i]),
+            .m_tcp_tx_stat_u(tcp_tx_stat_s3[i]),
             .m_axis_tcp_rx_u(axis_tcp_in_s3[i]),
             .s_axis_tcp_tx_u(axis_tcp_out_s3[i])
-        );	
+        );
     end
-    
-    // Decoupling 
+
+    // Decoupling
     // ----------------------------------------------------------------------
-    metaIntf #(.STYPE(req_t)) tcp_rq_ul [N_REGIONS]();
-    metaIntf #(.STYPE(req_t)) tcp_sq_ul [N_REGIONS]();
-    AXI4SR #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_tcp_in_ul [N_REGIONS]();
-    AXI4SR #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_tcp_out_ul [N_REGIONS]();
-    
-    meta_decoupler (.decouple(decouple_uclk), .s_meta(tcp_rq_s3), .m_meta(tcp_rq_ul));
-    meta_decoupler (.decouple(decouple_uclk), .s_meta(tcp_sq_ul), .m_meta(tcp_sq_s3));
-    axisr_decoupler (.decouple(decouple_uclk), .s_axis(axis_tcp_in_s3),    .m_axis(axis_tcp_in_ul));
-    axisr_decoupler (.decouple(decouple_uclk), .s_axis(axis_tcp_out_ul), .m_axis(axis_tcp_out_s3));
+    metaIntf #(.STYPE(tcp_listen_req_t)) tcp_listen_req_ul_raw [N_REGIONS]();
+    metaIntf #(.STYPE(tcp_listen_rsp_t)) tcp_listen_rsp_ul_raw [N_REGIONS]();
+    metaIntf #(.STYPE(tcp_open_req_t))   tcp_open_req_ul_raw   [N_REGIONS]();
+    metaIntf #(.STYPE(tcp_open_rsp_t))   tcp_open_rsp_ul_raw   [N_REGIONS]();
+    metaIntf #(.STYPE(tcp_close_req_t))  tcp_close_req_ul_raw  [N_REGIONS]();
+    metaIntf #(.STYPE(tcp_notify_t))     tcp_notify_ul_raw     [N_REGIONS]();
+    metaIntf #(.STYPE(tcp_rd_pkg_t))     tcp_rd_pkg_ul_raw     [N_REGIONS]();
+    metaIntf #(.STYPE(tcp_rx_meta_t))    tcp_rx_meta_ul_raw    [N_REGIONS]();
+    metaIntf #(.STYPE(tcp_tx_meta_t))    tcp_tx_meta_ul_raw    [N_REGIONS]();
+    metaIntf #(.STYPE(tcp_tx_stat_t))    tcp_tx_stat_ul_raw    [N_REGIONS]();
+    AXI4S #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_tcp_in_ul  [N_REGIONS]();
+    AXI4S #(.AXI4S_DATA_BITS(AXI_NET_BITS)) axis_tcp_out_ul [N_REGIONS]();
+
+    meta_decoupler (.decouple(decouple_uclk), .s_meta(tcp_listen_req_ul_raw), .m_meta(tcp_listen_req_s3));
+    meta_decoupler (.decouple(decouple_uclk), .s_meta(tcp_listen_rsp_s3),     .m_meta(tcp_listen_rsp_ul_raw));
+    meta_decoupler (.decouple(decouple_uclk), .s_meta(tcp_open_req_ul_raw),   .m_meta(tcp_open_req_s3));
+    meta_decoupler (.decouple(decouple_uclk), .s_meta(tcp_open_rsp_s3),       .m_meta(tcp_open_rsp_ul_raw));
+    meta_decoupler (.decouple(decouple_uclk), .s_meta(tcp_close_req_ul_raw),  .m_meta(tcp_close_req_s3));
+    meta_decoupler (.decouple(decouple_uclk), .s_meta(tcp_notify_s3),         .m_meta(tcp_notify_ul_raw));
+    meta_decoupler (.decouple(decouple_uclk), .s_meta(tcp_rd_pkg_ul_raw),     .m_meta(tcp_rd_pkg_s3));
+    meta_decoupler (.decouple(decouple_uclk), .s_meta(tcp_rx_meta_s3),        .m_meta(tcp_rx_meta_ul_raw));
+    meta_decoupler (.decouple(decouple_uclk), .s_meta(tcp_tx_meta_ul_raw),    .m_meta(tcp_tx_meta_s3));
+    meta_decoupler (.decouple(decouple_uclk), .s_meta(tcp_tx_stat_s3),        .m_meta(tcp_tx_stat_ul_raw));
+    axis_decoupler (.decouple(decouple_uclk), .s_axis(axis_tcp_in_s3),        .m_axis(axis_tcp_in_ul));
+    axis_decoupler (.decouple(decouple_uclk), .s_axis(axis_tcp_out_ul),       .m_axis(axis_tcp_out_s3));
 
 {% endif %}
 {% if cnfg.en_host_networking %}
@@ -1128,6 +1226,74 @@ module design_dynamic_top #(
     end
 
 {% endif %}	
+{% if cnfg.en_nvme %}
+    // ================-----------------------------------------------------------------
+    // NVMe
+    // ================-----------------------------------------------------------------
+
+    // User interfaces
+    metaIntf #(.STYPE(req_t))        nvme_req_user_ul [N_REGIONS] ();
+    metaIntf #(.STYPE(logic [15:0])) nvme_rsp_user_ul [N_REGIONS] ();
+    metaIntf #(.STYPE(nvme_cqe_t))   nvme_cpl_user_ul [N_REGIONS] ();
+
+    // NVMe MMU request (req_t, strm=STRM_NVME) and response
+    metaIntf #(.STYPE(req_t))            nvme_mmu_req ();
+    metaIntf #(.STYPE(nvme_mmu_rsp_t))   nvme_mmu_rsp ();
+
+    // NVMe Doorbell DMA
+    dmaIntf nvme_db_wr_req ();
+    AXI4S   nvme_db_wr_data (.aclk(aclk));
+
+    nvme_top inst_nvme_top (
+        .aclk(aclk),
+        .aresetn(aresetn),
+        .s_nvme_user_req(nvme_req_user_ul),
+        .m_nvme_user_rsp(nvme_rsp_user_ul),
+        .m_nvme_cpl(nvme_cpl_user_ul),
+        .m_nvme_rd_sq(nvme_mmu_req),
+        .s_nvme_rd_rsp(nvme_mmu_rsp),
+        .m_db_wr_req(nvme_db_wr_req),
+        .m_db_wr_data(nvme_db_wr_data),
+        .s_nvme_cnfg(s_axi_nvme_cnfg),
+        .s_nvme_prp(s_axi_nvme_prp),
+        .s_nvme_sq(s_axi_nvme_sq),
+        .s_nvme_cq(s_axi_nvme_cq)
+    );
+
+    // Merge the NVMe doorbell DMA into the host write DMA so the doorbell reaches the SSD's doorbell
+    // register over PCIe (via XDMA descriptor-bypass). Without this the doorbell writer FSM stalls on
+    // m_db_wr_req.ready, back-pressuring and killing the PCIe link. Mirrors coyote-nvme inst_nvme_host_arb.
+    // The merged req/data feed the host write reg_arrays above (wr_HDMA_merged / axis_host_out_merged).
+    dma_axis_arbiter_2to1 inst_nvme_host_arb (
+        .aclk(aclk),
+        .aresetn(aresetn),
+        .s_dma_req_0(wr_HDMA_host),
+        .s_axis_0(axis_host_out_s0),
+        .s_dma_req_1(nvme_db_wr_req),
+        .s_axis_1(nvme_db_wr_data),
+        .m_dma_req(wr_HDMA_merged),
+        .m_axis(axis_host_out_merged)
+    );
+
+    // Merged bpss_rd_sq array: region 0 carries NVMe MMU requests in addition to user
+    // bpss reads (NVMe priority); other regions pass straight through.
+    metaIntf #(.STYPE(req_t)) bpss_rd_sq_mmu [N_REGIONS] ();
+
+    nvme_bpss_mux inst_nvme_bpss_mux (
+        .aclk     (aclk),
+        .aresetn  (aresetn),
+        .s_nvme   (nvme_mmu_req),
+        .s_bpss   (bpss_rd_sq[0]),
+        .m_merged (bpss_rd_sq_mmu[0])
+    );
+
+    for (genvar i = 1; i < N_REGIONS; i++) begin : gen_bpss_rd_passthrough
+        assign bpss_rd_sq_mmu[i].valid = bpss_rd_sq[i].valid;
+        assign bpss_rd_sq_mmu[i].data  = bpss_rd_sq[i].data;
+        assign bpss_rd_sq[i].ready     = bpss_rd_sq_mmu[i].ready;
+    end
+{% endif %}
+
     // Dynamic management
 	mmu_top #(
         .ID_DYN(ID_DYN)
@@ -1143,7 +1309,11 @@ module design_dynamic_top #(
 {% endif %}	
         .s_notify(notify),
         .m_host_sq(host_sq),
+{% if cnfg.en_nvme %}
+        .s_bpss_rd_sq(bpss_rd_sq_mmu),
+{% else %}
         .s_bpss_rd_sq(bpss_rd_sq),
+{% endif %}
         .s_bpss_wr_sq(bpss_wr_sq),
         .m_bpss_rd_cq(bpss_rd_cq),
         .m_bpss_wr_cq(bpss_wr_cq),
@@ -1186,7 +1356,10 @@ module design_dynamic_top #(
 {% endif %}
 {% if cnfg.en_wb %}
         .m_wback(m_wback),
-{% endif %}	
+{% endif %}
+{% if cnfg.en_nvme %}
+        .m_nvme_rd_rsp(nvme_mmu_rsp),
+{% endif %}
         .usr_irq(m_usr_irq)
 	);
 	
@@ -1302,16 +1475,37 @@ module design_dynamic_top #(
         .axis_rdma_src_rsp_tvalid           (axis_rdma_out_rsp_ul[{{ i }}].tvalid),
 {% endif %}
 {% if cnfg.en_tcp %}
-        // TCP DESC
-        .tcp_sq_valid                   (tcp_sq_ul[{{ i }}].valid),
-        .tcp_sq_ready                   (tcp_sq_ul[{{ i }}].ready),
-        .tcp_sq_data                    (tcp_sq_ul[{{ i }}].data),
-        .tcp_rq_valid                   (tcp_rq_ul[{{ i }}].valid),
-        .tcp_rq_ready                   (tcp_rq_ul[{{ i }}].ready),
-        .tcp_rq_data                    (tcp_rq_ul[{{ i }}].data), 
-        .tcp_cq_valid                   (tcp_cq_ul[{{ i }}].valid),
-        .tcp_cq_ready                   (tcp_cq_ul[{{ i }}].ready),
-        .tcp_cq_data                    (tcp_cq_ul[{{ i }}].data), 
+        // TCP RAW SOCKET API
+        .tcp_listen_req_valid           (tcp_listen_req_ul_raw[{{ i }}].valid),
+        .tcp_listen_req_ready           (tcp_listen_req_ul_raw[{{ i }}].ready),
+        .tcp_listen_req_data            (tcp_listen_req_ul_raw[{{ i }}].data),
+        .tcp_listen_rsp_valid           (tcp_listen_rsp_ul_raw[{{ i }}].valid),
+        .tcp_listen_rsp_ready           (tcp_listen_rsp_ul_raw[{{ i }}].ready),
+        .tcp_listen_rsp_data            (tcp_listen_rsp_ul_raw[{{ i }}].data),
+        .tcp_open_req_valid             (tcp_open_req_ul_raw[{{ i }}].valid),
+        .tcp_open_req_ready             (tcp_open_req_ul_raw[{{ i }}].ready),
+        .tcp_open_req_data              (tcp_open_req_ul_raw[{{ i }}].data),
+        .tcp_open_rsp_valid             (tcp_open_rsp_ul_raw[{{ i }}].valid),
+        .tcp_open_rsp_ready             (tcp_open_rsp_ul_raw[{{ i }}].ready),
+        .tcp_open_rsp_data              (tcp_open_rsp_ul_raw[{{ i }}].data),
+        .tcp_close_req_valid            (tcp_close_req_ul_raw[{{ i }}].valid),
+        .tcp_close_req_ready            (tcp_close_req_ul_raw[{{ i }}].ready),
+        .tcp_close_req_data             (tcp_close_req_ul_raw[{{ i }}].data),
+        .tcp_notify_valid               (tcp_notify_ul_raw[{{ i }}].valid),
+        .tcp_notify_ready               (tcp_notify_ul_raw[{{ i }}].ready),
+        .tcp_notify_data                (tcp_notify_ul_raw[{{ i }}].data),
+        .tcp_rd_pkg_valid               (tcp_rd_pkg_ul_raw[{{ i }}].valid),
+        .tcp_rd_pkg_ready               (tcp_rd_pkg_ul_raw[{{ i }}].ready),
+        .tcp_rd_pkg_data                (tcp_rd_pkg_ul_raw[{{ i }}].data),
+        .tcp_rx_meta_valid              (tcp_rx_meta_ul_raw[{{ i }}].valid),
+        .tcp_rx_meta_ready              (tcp_rx_meta_ul_raw[{{ i }}].ready),
+        .tcp_rx_meta_data               (tcp_rx_meta_ul_raw[{{ i }}].data),
+        .tcp_tx_meta_valid              (tcp_tx_meta_ul_raw[{{ i }}].valid),
+        .tcp_tx_meta_ready              (tcp_tx_meta_ul_raw[{{ i }}].ready),
+        .tcp_tx_meta_data               (tcp_tx_meta_ul_raw[{{ i }}].data),
+        .tcp_tx_stat_valid              (tcp_tx_stat_ul_raw[{{ i }}].valid),
+        .tcp_tx_stat_ready              (tcp_tx_stat_ul_raw[{{ i }}].ready),
+        .tcp_tx_stat_data               (tcp_tx_stat_ul_raw[{{ i }}].data),
 
         .axis_tcp_sink_tdata            (axis_tcp_in_ul[{{ i }}].tdata),
         .axis_tcp_sink_tkeep            (axis_tcp_in_ul[{{ i }}].tkeep),
@@ -1324,9 +1518,21 @@ module design_dynamic_top #(
         .axis_tcp_src_tready            (axis_tcp_out_ul[{{ i }}].tready),
         .axis_tcp_src_tvalid            (axis_tcp_out_ul[{{ i }}].tvalid),
 {% endif %}
+{% if cnfg.en_nvme %}
+        // NVMe DESC
+        .nvme_sq_valid                  (nvme_req_user_ul[{{ i }}].valid),
+        .nvme_sq_ready                  (nvme_req_user_ul[{{ i }}].ready),
+        .nvme_sq_data                   (nvme_req_user_ul[{{ i }}].data),
+        .nvme_cq_rsp_valid              (nvme_rsp_user_ul[{{ i }}].valid),
+        .nvme_cq_rsp_ready              (nvme_rsp_user_ul[{{ i }}].ready),
+        .nvme_cq_rsp_data               (nvme_rsp_user_ul[{{ i }}].data),
+        .nvme_cpl_valid                 (nvme_cpl_user_ul[{{ i }}].valid),
+        .nvme_cpl_ready                 (nvme_cpl_user_ul[{{ i }}].ready),
+        .nvme_cpl_data                  (nvme_cpl_user_ul[{{ i }}].data),
+{% endif %}
 {% if cnfg.en_host_networking %}
-        // Outgoing TX traffic 
-        .axis_host_networking_src_tx_tdata(axis_host_tx_ul[{{ i }}].tdata), 
+        // Outgoing TX traffic
+        .axis_host_networking_src_tx_tdata(axis_host_tx_ul[{{ i }}].tdata),
         .axis_host_networking_src_tx_tkeep(axis_host_tx_ul[{{ i }}].tkeep),
         .axis_host_networking_src_tx_tlast(axis_host_tx_ul[{{ i }}].tlast),
         .axis_host_networking_src_tx_tready(axis_host_tx_ul[{{ i }}].tready),
