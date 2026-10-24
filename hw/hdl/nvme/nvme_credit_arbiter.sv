@@ -24,7 +24,6 @@
  * SOFTWARE.
  */
 
-
 `timescale 1ns/1ps
 
 import lynxTypes::*;
@@ -44,8 +43,8 @@ module nvme_credit_arbiter #(
     input  logic                    aclk,
     input  logic                    aresetn,
 
-    metaIntf.s                      s_meta [N_ID],   // req_t
-    metaIntf.m                      m_meta,          // req_t
+    metaIntf.s                      s_meta [N_ID],   // nvme_req_t
+    metaIntf.m                      m_meta,          // nvme_req_t
 
     output logic [N_ID_BITS-1:0]    id_out
 );
@@ -55,7 +54,7 @@ localparam integer CRED_BITS = LEN_BITS + 1;
 // Unpacked per-region inputs
 logic [N_ID-1:0]            valid_snk;
 logic [N_ID-1:0]            ready_snk;
-req_t                       data_snk [N_ID];
+nvme_req_t                  data_snk [N_ID];
 logic [LEN_BITS-1:0]        len_snk  [N_ID];
 
 logic [CRED_BITS-1:0]       cred     [N_ID];

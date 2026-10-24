@@ -1167,12 +1167,12 @@ module design_dynamic_top #(
     // ================-----------------------------------------------------------------
 
     // User interfaces
-    metaIntf #(.STYPE(req_t))        nvme_req_user_ul [N_REGIONS] ();
+    metaIntf #(.STYPE(nvme_req_t))   nvme_req_user_ul [N_REGIONS] ();
     metaIntf #(.STYPE(logic [15:0])) nvme_rsp_user_ul [N_REGIONS] ();
     metaIntf #(.STYPE(nvme_cqe_t))   nvme_cpl_user_ul [N_REGIONS] ();
 
-    // NVMe MMU request (req_t, strm=STRM_NVME) and response
-    metaIntf #(.STYPE(req_t))            nvme_mmu_req ();
+    // NVMe PRP translations (to the MMU of the requesting region)
+    metaIntf #(.STYPE(nvme_mmu_req_t))   nvme_mmu_req ();
     metaIntf #(.STYPE(nvme_mmu_rsp_t))   nvme_mmu_rsp ();
 
 {% if cnfg.en_nvme_host %}
@@ -1230,46 +1230,6 @@ module design_dynamic_top #(
     // queue/stride limitation is documented alongside the PL doorbell writer.
 {% endif %}
 
-{% if cnfg.mult_regions %}
-    // Multi-region: route each NVMe MMU request to its region's TLB (by vfid)
-    metaIntf #(.STYPE(req_t)) bpss_rd_sq_mmu  [N_REGIONS] ();
-    metaIntf #(.STYPE(req_t)) nvme_mmu_demux  [N_REGIONS] ();
-    logic [N_REGIONS_BITS-1:0]  nvme_mmu_vfid;
-    logic [N_REGIONS-1:0]       nvme_mmu_demux_rdy;
-
-    assign nvme_mmu_vfid = nvme_mmu_req.data.vfid[N_REGIONS_BITS-1:0];
-
-    for (genvar i = 0; i < N_REGIONS; i++) begin : gen_nvme_mmu_route
-        assign nvme_mmu_demux[i].valid = nvme_mmu_req.valid && (nvme_mmu_vfid == i);
-        assign nvme_mmu_demux[i].data  = nvme_mmu_req.data;
-        assign nvme_mmu_demux_rdy[i]   = nvme_mmu_demux[i].ready;
-
-        nvme_mmu_arb inst_nvme_mmu_arb (
-            .aclk     (aclk),
-            .aresetn  (aresetn),
-            .s_nvme   (nvme_mmu_demux[i]),
-            .s_bpss   (bpss_rd_sq[i]),
-            .m_merged (bpss_rd_sq_mmu[i])
-        );
-    end
-
-    always_comb begin
-        nvme_mmu_req.ready = 1'b0;
-        for (int i = 0; i < N_REGIONS; i++)
-            if (nvme_mmu_vfid == i) nvme_mmu_req.ready = nvme_mmu_demux_rdy[i];
-    end
-{% else %}
-    // Single region: NVMe MMU requests merge directly into region 0's bpss read path.
-    metaIntf #(.STYPE(req_t)) bpss_rd_sq_mmu [N_REGIONS] ();
-
-    nvme_mmu_arb inst_nvme_mmu_arb (
-        .aclk     (aclk),
-        .aresetn  (aresetn),
-        .s_nvme   (nvme_mmu_req),
-        .s_bpss   (bpss_rd_sq[0]),
-        .m_merged (bpss_rd_sq_mmu[0])
-    );
-{% endif %}
 {% endif %}
 
     // Dynamic management
@@ -1287,11 +1247,7 @@ module design_dynamic_top #(
 {% endif %}	
         .s_notify(notify),
         .m_host_sq(host_sq),
-{% if cnfg.en_nvme %}
-        .s_bpss_rd_sq(bpss_rd_sq_mmu),
-{% else %}
         .s_bpss_rd_sq(bpss_rd_sq),
-{% endif %}
         .s_bpss_wr_sq(bpss_wr_sq),
         .m_bpss_rd_cq(bpss_rd_cq),
         .m_bpss_wr_cq(bpss_wr_cq),
@@ -1336,6 +1292,7 @@ module design_dynamic_top #(
         .m_wback(m_wback),
 {% endif %}
 {% if cnfg.en_nvme %}
+        .s_nvme_rd_sq(nvme_mmu_req),
         .m_nvme_rd_rsp(nvme_mmu_rsp),
 {% endif %}	
         .usr_irq(m_usr_irq)

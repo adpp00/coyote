@@ -24,7 +24,6 @@
  * SOFTWARE.
  */
 
-
 `timescale 1ns/1ps
 
 import lynxTypes::*;
@@ -39,7 +38,7 @@ module nvme_prp_dispatch (
     input  logic        aclk,
     input  logic        aresetn,
 
-    metaIntf.s          s_nvme_cmd_parsed,     // req_t
+    metaIntf.s          s_nvme_cmd_parsed,     // nvme_req_t
     metaIntf.s          s_nvme_info_rsp,   // nvme_info_rsp_t
     input logic [NVME_QUEUE_BITS-1:0] s_alloc_cid,
     output logic [NVME_QUEUE_BITS-1:0] m_cmd_cid,
@@ -57,7 +56,7 @@ module nvme_prp_dispatch (
     } state_t;
 
     state_t          state_C, state_N;
-    req_t  cmd_C, cmd_N;
+    nvme_req_t cmd_C, cmd_N;
     nvme_info_rsp_t  info_rsp_C, info_rsp_N;
     logic [NVME_QUEUE_BITS-1:0] cid_C;
     assign m_cmd_cid = cid_C;
@@ -151,6 +150,7 @@ module nvme_prp_dispatch (
                 // independently of the command's physical SQ slot below.
                 prp_req.sq_tail   = cid_C;
                 prp_req.vfid      = cmd_C.vfid[N_REGIONS_BITS-1:0];
+                prp_req.pid       = cmd_C.pid;
                 prp_req.writeRead = cmd_C.writeRead;
 
                 // Build cmd_dispatched
@@ -207,30 +207,5 @@ module nvme_prp_dispatch (
             cmd_fired_C <= cmd_fired_N;
         end
     end
-
-    // ILA Debug
-// `define EN_ILA_NVME_S1
-`ifdef EN_ILA_NVME_S1
-    ila_nvme_s1 inst_ila_nvme_s1 (
-        .clk    (aclk),
-        .probe0 (s_nvme_cmd_parsed.valid),                  // 1
-        .probe1 (s_nvme_cmd_parsed.ready),                  // 1
-        .probe2 (s_nvme_info_rsp.valid),                // 1
-        .probe3 (s_nvme_info_rsp.ready),                // 1
-        .probe4 (s_nvme_info_rsp.data.error),           // 16
-        .probe5 (s_nvme_info_rsp.data.lba_offset),      // 64
-        .probe6 (m_nvme_cmd_dispatched.valid && (m_cmd_error != 0)), // rejected command VALID
-        .probe7 (m_nvme_cmd_dispatched.ready),          // command READY (1)
-        .probe8 (m_cmd_error),                         // local lookup error (16)
-        .probe9 (m_nvme_prp_req.valid),                 // 1
-        .probe10(m_nvme_prp_req.ready),                 // 1
-        .probe11(m_nvme_cmd_dispatched.valid),                  // 1
-        .probe12(m_nvme_cmd_dispatched.ready),                  // 1
-        .probe13(m_nvme_cmd_dispatched.data.slba),              // 64
-        .probe14(state_C),                              // 3
-        .probe15(prp_fired_C),                          // 1
-        .probe16(cmd_fired_C)                           // 1
-    );
-`endif
 
 endmodule

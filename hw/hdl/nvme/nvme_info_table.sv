@@ -24,7 +24,6 @@
  * SOFTWARE.
  */
 
-
 `timescale 1ns/1ps
 
 import lynxTypes::*;
@@ -34,6 +33,9 @@ import lynxTypes::*;
  *
  * Stores per-device NVMe info and per-(region, device) permissions.
  * SQ space follows SQHD; CID/PRP ownership follows completion, independently.
+ * Each device allocates CIDs from a free list. A CID returns to the list with its
+ * completion, or when its command fails during PRP preparation. After reset the
+ * list is filled one entry per clock, so submissions wait NVME_QUEUE_DEPTH cycles.
  */
 module nvme_info_table #(
     parameter int MAX_NVME_DEVICES = NVME_NUM_DEVICES,
@@ -45,7 +47,7 @@ module nvme_info_table #(
     metaIntf.s          s_tbl_req,         // nvme_info_req_t (with region_id, naddr, len)
     metaIntf.m          m_tbl_rsp,         // nvme_info_rsp_t (with lba_offset)
 
-    // Internal sidebands; shared request/response types stay unchanged.
+    // CID allocation and release sidebands
     output logic [NVME_QUEUE_BITS-1:0] alloc_cid,
     input logic cpl_valid,
     input logic [N_NVME_BITS-1:0] cpl_dev,
@@ -282,8 +284,10 @@ module nvme_info_table #(
                          !perm_table[s_tbl_req.data.region_id][s_tbl_req.data.dev_id].valid) begin
                     rsp_N.error = NVME_PERMISSION_DENIED;
                 end
-                // Permission check: offset + len within allowed range?
-                else if ((s_tbl_req.data.naddr + s_tbl_req.data.len) >
+                // Permission check: non-empty and offset + len within allowed range?
+                // (a zero length would otherwise be submitted as NLB = 0xFFFF)
+                else if (s_tbl_req.data.len == '0 ||
+                         (s_tbl_req.data.naddr + s_tbl_req.data.len) >
                          perm_table[s_tbl_req.data.region_id][s_tbl_req.data.dev_id].lba_size) begin
                     rsp_N.error = NVME_PERMISSION_DENIED;
                 end
@@ -348,48 +352,10 @@ module nvme_info_table #(
                      s_perm_update.data.dev_id < MAX_NVME_DEVICES && s_perm_update.data.region_id < N_REGIONS) begin
                 perm_table[s_perm_update.data.region_id][s_perm_update.data.dev_id].lba_offset <= s_perm_update.data.lba_offset;
                 perm_table[s_perm_update.data.region_id][s_perm_update.data.dev_id].lba_size   <= s_perm_update.data.lba_size;
-                perm_table[s_perm_update.data.region_id][s_perm_update.data.dev_id].valid      <= 1'b1;
+                perm_table[s_perm_update.data.region_id][s_perm_update.data.dev_id].valid      <= s_perm_update.data.valid;
             end
             if (allocate) rsp_cid_C <= candidate_cid_C;
         end
     end
-
-    // ILA Debug
-// `define EN_ILA_NVME_INFO_TABLE
-`ifdef EN_ILA_NVME_INFO_TABLE
-    ila_nvme_info_table inst_ila_nvme_info_table (
-        .clk    (aclk),
-        // s_tbl_req
-        .probe0 (s_tbl_req.valid),                      // 1
-        .probe1 (s_tbl_req.ready),                      // 1
-        .probe2 (s_tbl_req.data.dev_id),                // N_NVME_BITS (4)
-        .probe3 (s_tbl_req.data.region_id),             // REGION_ID_BITS
-        .probe4 (s_tbl_req.data.naddr),                 // ADDR_BITS (48)
-        .probe5 (s_tbl_req.data.len),                   // LEN_BITS (28)
-        // m_tbl_rsp
-        .probe6 (m_tbl_rsp.valid),                      // 1
-        .probe7 (m_tbl_rsp.ready),                      // 1
-        .probe8 (m_tbl_rsp.data.error),                 // 16
-        .probe9 (m_tbl_rsp.data.lba_offset),            // 64
-        .probe10(m_tbl_rsp.data.sq_tail),               // NVME_QUEUE_BITS (6)
-        // Completion/SQ consumption, independent of CQ acknowledgement
-        .probe11(cpl_valid),                            // 1
-        .probe12(candidate_valid_C),                    // 1
-        .probe13(cpl_dev),                              // N_NVME_BITS (4)
-        .probe14(cpl_sq_head[NVME_QUEUE_BITS-1:0]),      // NVME_QUEUE_BITS (6)
-        // s_update_tbl
-        .probe15(s_update_tbl.valid),                   // 1
-        .probe16(s_update_tbl.ready),                   // 1
-        .probe17(s_update_tbl.data.dev_id),             // N_NVME_BITS (4)
-        // s_perm_update
-        .probe18(s_perm_update.valid),                  // 1
-        .probe19(s_perm_update.ready),                  // 1
-        .probe20(s_perm_update.data.region_id),         // REGION_ID_BITS
-        .probe21(s_perm_update.data.dev_id),            // N_NVME_BITS (4)
-        // Internal
-        .probe22(rsp_free),                             // 1
-        .probe23(rsp_valid_C)                           // 1
-    );
-`endif
 
 endmodule

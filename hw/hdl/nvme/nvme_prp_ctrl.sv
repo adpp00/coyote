@@ -24,7 +24,6 @@
  * SOFTWARE.
  */
 
-
 `timescale 1ns/1ps
 
 import lynxTypes::*;
@@ -224,35 +223,5 @@ module nvme_prp_ctrl #(
         .b_addr     (b_addr),
         .b_data_out (b_data_out)
     );
-
-    // ILA Debug
-// `define EN_ILA_NVME_PRP_CTRL
-`ifdef EN_ILA_NVME_PRP_CTRL
-    ila_nvme_prp_ctrl inst_ila_nvme_prp_ctrl (
-        .clk    (aclk),
-        // Write port (from manage_prp)
-        .probe0 (s_prp.valid),                          // 1
-        .probe1 (s_prp.ready),                          // 1
-        .probe2 (s_prp.data.addr),                      // ADDR_BITS
-        .probe3 (s_prp.data.data[31:0]),                // 32
-        .probe4 (a_en),                                 // 1
-        .probe5 (a_addr),                               // ADDR_BITS
-        .probe6 (a_data_in[31:0]),                      // 32
-        // Read port (from AXI BRAM ctrl — NVMe device reads)
-        .probe7 (bram_en_a),                            // 1
-        .probe8 (bram_addr_a),                          // RAM_ADDR_WIDTH
-        .probe9 (b_addr),                               // ADDR_BITS
-        .probe10(b_data_out[31:0]),                     // 32
-        .probe11(b_data_out[63:32]),                    // 32
-        // AXI read channel
-        .probe12(s_axi_nvme_prp.arvalid),                   // 1
-        .probe13(s_axi_nvme_prp.arready),                   // 1
-        .probe14(s_axi_nvme_prp.araddr[19:0]),              // 20
-        .probe15(s_axi_nvme_prp.rvalid),                    // 1
-        .probe16(s_axi_nvme_prp.rready),                    // 1
-        .probe17(s_axi_nvme_prp.rdata[31:0]),               // 32
-        .probe18(s_axi_nvme_prp.rdata[63:32])               // 32
-    );
-`endif
 
 endmodule

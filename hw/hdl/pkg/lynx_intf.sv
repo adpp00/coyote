@@ -110,6 +110,9 @@ logic 			valid;
 logic 			wr;
 pid_t			pid;
 logic [STRM_BITS-1:0] strm;
+`ifdef EN_NVME
+logic           nvme; // NVMe PRP lookup, hits an entry of any stream
+`endif
 logic 			hit;
 
 modport s (
@@ -117,6 +120,9 @@ modport s (
 	input wr,
 	input pid,
     input strm,
+`ifdef EN_NVME
+    input nvme,
+`endif
 	input addr,
 	output hit,
 	output data
@@ -127,6 +133,9 @@ modport m (
 	output wr,
 	output pid,
     output strm,
+`ifdef EN_NVME
+    output nvme,
+`endif
 	output addr,
 	input hit,
 	input data

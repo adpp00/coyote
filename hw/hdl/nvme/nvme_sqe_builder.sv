@@ -24,7 +24,6 @@
  * SOFTWARE.
  */
 
-
 `timescale 1ns/1ps
 
 import lynxTypes::*;
@@ -195,26 +194,5 @@ module nvme_sqe_builder (
             abort_C   <= abort_N;
         end
     end
-
-    // ILA Debug
-// `define EN_ILA_NVME_S2
-`ifdef EN_ILA_NVME_S2
-    ila_nvme_s2 inst_ila_nvme_s2 (
-        .clk    (aclk),
-        .probe0 (s_nvme_cmd_dispatched.valid),                  // 1
-        .probe1 (s_nvme_cmd_dispatched.ready),                  // 1
-        .probe2 (s_nvme_prp_rsp.valid),                 // 1
-        .probe3 (s_nvme_prp_rsp.ready),                 // 1
-        .probe4 (m_nvme_cmd_sqe.valid),                  // 1
-        .probe5 (m_nvme_cmd_sqe.ready),                  // 1
-        .probe6 (m_nvme_cmd_sqe.data.dev_id),            // N_NVME_BITS (4)
-        .probe7 (m_nvme_cmd_sqe.data.slba),              // 64
-        .probe8 (m_nvme_cmd_sqe.data.nlba),              // 16
-        .probe9 (m_sq_db_req.valid),                    // 1
-        .probe10(m_sq_db_req.ready),                    // 1
-        .probe11(m_sq_db_req.data.sq_db_addr),             // 64
-        .probe12(state_C)                               // 3
-    );
-`endif
 
 endmodule

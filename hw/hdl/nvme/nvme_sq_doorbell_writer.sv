@@ -24,7 +24,6 @@
  * SOFTWARE.
  */
 
-
 `timescale 1ns/1ps
 
 import lynxTypes::*;
@@ -43,7 +42,7 @@ module nvme_sq_doorbell_writer (
 
     // Output: DMA write request (address + length)
     dmaIntf.m           m_dma_wr_req,
-    
+
     // Output: DMA write data (doorbell value)
     AXI4S.m             m_dma_wr_data
 );
@@ -81,7 +80,7 @@ module nvme_sq_doorbell_writer (
             // ST_IDLE: Wait for doorbell request
             ST_IDLE: begin
                 s_sq_db_req.ready = 1'b1;
-                
+
                 if (s_sq_db_req.valid) begin
                     db_req_N = s_sq_db_req.data;
                     state_N  = ST_SEND_DMA_REQ;
@@ -134,23 +133,5 @@ module nvme_sq_doorbell_writer (
             db_req_C <= db_req_N;
         end
     end
-
-    // ILA Debug
-// `define EN_ILA_NVME_SQ_DB_WRITER
-`ifdef EN_ILA_NVME_SQ_DB_WRITER
-    ila_nvme_sq_doorbell_writer inst_ila_nvme_sq_doorbell_writer (
-        .clk    (aclk),
-        .probe0 (s_sq_db_req.valid),                    // 1
-        .probe1 (s_sq_db_req.ready),                    // 1
-        .probe2 (s_sq_db_req.data.sq_db_addr),             // 64
-        .probe3 (s_sq_db_req.data.sq_tail),             // NVME_QUEUE_BITS (6)
-        .probe4 (m_dma_wr_req.valid),                   // 1
-        .probe5 (m_dma_wr_req.ready),                   // 1
-        .probe6 (m_dma_wr_req.req.paddr),               // ADDR_BITS (48)
-        .probe7 (m_dma_wr_data.tvalid),                 // 1
-        .probe8 (m_dma_wr_data.tready),                 // 1
-        .probe9 (state_C)                               // 2
-    );
-`endif
 
 endmodule

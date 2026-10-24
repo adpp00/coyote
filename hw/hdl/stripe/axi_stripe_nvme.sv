@@ -47,44 +47,6 @@ module axi_stripe_nvme #(
     AXI4.m              m_axi
 );
 
-// Comment out this define to remove the post-BD NVMe card-path ILA.
-// `define EN_ILA_NVME_STRIPE
-`ifdef EN_ILA_NVME_STRIPE
-ila_nvme_stripe inst_ila_nvme_stripe (
-    .clk    (aclk),
-    // AW: valid, ready, address, length, size, burst
-    .probe0 (s_axi.awvalid),
-    .probe1 (s_axi.awready),
-    .probe2 (s_axi.awaddr),
-    .probe3 (s_axi.awlen),
-    .probe4 (s_axi.awsize),
-    .probe5 (s_axi.awburst),
-    // W: valid, ready, data, byte enables, last
-    .probe6 (s_axi.wvalid),
-    .probe7 (s_axi.wready),
-    .probe8 (s_axi.wdata),
-    .probe9 (s_axi.wstrb),
-    .probe10(s_axi.wlast),
-    // B: valid, ready, response
-    .probe11(s_axi.bvalid),
-    .probe12(s_axi.bready),
-    .probe13(s_axi.bresp),
-    // AR: valid, ready, address, length, size, burst
-    .probe14(s_axi.arvalid),
-    .probe15(s_axi.arready),
-    .probe16(s_axi.araddr),
-    .probe17(s_axi.arlen),
-    .probe18(s_axi.arsize),
-    .probe19(s_axi.arburst),
-    // R: valid, ready, data, response, last
-    .probe20(s_axi.rvalid),
-    .probe21(s_axi.rready),
-    .probe22(s_axi.rdata),
-    .probe23(s_axi.rresp),
-    .probe24(s_axi.rlast)
-);
-`endif
-
 `ifdef EN_MEM_STRIPE
 
 AXI4 s_axi_int();

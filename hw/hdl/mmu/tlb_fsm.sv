@@ -63,7 +63,8 @@ module tlb_fsm #(
 	metaIntf.s 							s_req,
 
 `ifdef EN_NVME
-	// NVMe PA response (when strm == STRM_NVME)
+	// NVMe PRP translations (one response per 4 KB segment)
+	metaIntf.s 							s_nvme_req,
 	metaIntf.m 							m_nvme_rsp,
 `endif
 
@@ -95,8 +96,10 @@ localparam integer PHY_L_BITS = PADDR_BITS - PG_L_BITS;
 localparam integer PHY_S_BITS = PADDR_BITS - PG_S_BITS;
 localparam integer TAG_L_BITS = VADDR_BITS - HASH_L_BITS - PG_L_BITS;
 localparam integer TAG_S_BITS = VADDR_BITS - HASH_S_BITS - PG_S_BITS;
+`ifdef EN_NVME
 localparam integer STRM_L_OFFS     = TAG_L_BITS + PID_BITS;
 localparam integer STRM_S_OFFS     = TAG_S_BITS + PID_BITS;
+`endif
 localparam integer PHY_L_OFFS      = TAG_L_BITS + PID_BITS + STRM_BITS + 1;
 localparam integer PHY_S_OFFS      = TAG_S_BITS + PID_BITS + STRM_BITS + 1;
 localparam integer HPID_L_OFFS     = TAG_L_BITS + PID_BITS + STRM_BITS + 1 + PHY_L_BITS;
@@ -142,9 +145,12 @@ logic [STRM_BITS-1:0] strm_C, strm_N;
 logic [DEST_BITS-1:0] dest_C, dest_N;
 logic [PID_BITS-1:0] pid_C, pid_N;
 logic val_C, val_N;
-// NVMe is-host, registered at TLB hit time
-logic nvme_is_host_C, nvme_is_host_N;
 logic host_C, host_N;
+`ifdef EN_NVME
+logic nvme_C, nvme_N;                   // Current request is an NVMe translation
+logic nvme_turn_C, nvme_turn_N;         // Round-robin between NVMe and bypass requests
+logic nvme_is_host_C, nvme_is_host_N;   // Stream of the hit entry, registered at hit time
+`endif
 
 // TLB data
 logic [TLB_L_DATA_BITS-1:0] data_l_C, data_l_N;
@@ -281,7 +287,11 @@ always_ff @(posedge aclk) begin: PROC_REG
         dest_C <= 'X;
         pid_C <= 'X;
         val_C <= 1'b0;
+    `ifdef EN_NVME
+        nvme_C <= 1'b0;
+        nvme_turn_C <= 1'b0;
         nvme_is_host_C <= 1'b0;
+    `endif
         // TLB
         plen_C <= 'X;
         data_l_C <= 'X;
@@ -331,7 +341,11 @@ always_ff @(posedge aclk) begin: PROC_REG
         dest_C <= dest_N;
         pid_C <= pid_N;
         val_C <= val_N;
+    `ifdef EN_NVME
+        nvme_C <= nvme_N;
+        nvme_turn_C <= nvme_turn_N;
         nvme_is_host_C <= nvme_is_host_N;
+    `endif
         // TLB
         plen_C <= plen_N;
         data_l_C <= data_l_N;	
@@ -400,6 +414,13 @@ always_comb begin: NSL
 					state_N = ST_MUTEX;
 				end
 			end
+`ifdef EN_NVME
+            else if(s_nvme_req.valid && (nvme_turn_C || !s_req.valid)) begin
+                if(s_nvme_req.data.len != 0) begin
+                    state_N = ST_MUTEX;
+                end
+            end
+`endif
             else if(s_req.valid) begin
                 if(s_req.data.len != 0) begin
                     state_N = ST_MUTEX;
@@ -536,11 +557,6 @@ always_comb begin: NSL
                 state_N = lTlb.hit ? ST_HIT_LARGE : ST_HIT_SMALL;    
             end
             else begin
-`ifdef EN_NVME
-                if(strm_C == STRM_NVME)
-                    state_N = ST_NVME_FAIL;
-                else
-`endif
                 state_N = ST_MISS_CACHE;
             end    
         end
@@ -554,7 +570,7 @@ always_comb begin: NSL
 		// Calc.
 		ST_CALC_LARGE:
 `ifdef EN_NVME
-			if(strm_C == STRM_NVME)
+			if(nvme_C)
 				state_N = ST_NVME_RSP;
 			else
 `endif
@@ -572,7 +588,7 @@ always_comb begin: NSL
 `endif
 		ST_CALC_SMALL:
 `ifdef EN_NVME
-			if(strm_C == STRM_NVME)
+			if(nvme_C)
 				state_N = ST_NVME_RSP;
 			else
 `endif
@@ -633,7 +649,12 @@ always_comb begin: NSL
                 if(s_pfault.data)
                     state_N = ST_MUTEX;
                 else
+`ifdef EN_NVME
+                    // A failed NVMe translation still owes the PRP builder a (fault) response
+                    state_N = nvme_C ? ST_NVME_FAIL : ST_IDLE;
+`else
                     state_N = ST_IDLE;
+`endif
             end
             else if(s_req.valid && cch_size_C <= CACHE_MAX_SIZE) begin
                 state_N = ST_MISS_LUP_IDLE_CALC;
@@ -670,7 +691,11 @@ always_comb begin: DP
 	dest_N = dest_C;
 	pid_N = pid_C;
 	val_N = 1'b0;
+`ifdef EN_NVME
+	nvme_N = nvme_C;
+	nvme_turn_N = nvme_turn_C;
 	nvme_is_host_N = nvme_is_host_C;
+`endif
 
     // Return
     rtrn_N = rtrn_C;
@@ -726,6 +751,8 @@ always_comb begin: DP
     s_invldt.ready = 1'b0;
     
 `ifdef EN_NVME
+    s_nvme_req.ready = 1'b0;
+
     m_nvme_rsp.valid = 1'b0;
     m_nvme_rsp.data  = '0;
 `endif
@@ -738,12 +765,18 @@ always_comb begin: DP
 	lTlb.wr = RDWR;
 	lTlb.pid = pid_C;
     lTlb.strm = strm_C;
+`ifdef EN_NVME
+    lTlb.nvme = nvme_C;
+`endif
 	lTlb.valid = val_C;
 
 	sTlb.addr = vaddr_C;
 	sTlb.wr = RDWR;
 	sTlb.pid = pid_C;
     sTlb.strm = strm_C;
+`ifdef EN_NVME
+    sTlb.nvme = nvme_C;
+`endif
 	sTlb.valid = val_C;
 
     hit = lTlb.hit | sTlb.hit;
@@ -838,6 +871,9 @@ always_comb begin: DP
 				if(cch_buff_src.data.len != 0) begin
 					// Lock the mutex (next state)
 					lock = 1'b1;
+`ifdef EN_NVME
+                    nvme_N = 1'b0;
+`endif
 
 					// Latch the request
 					pid_N = cch_buff_src.data.pid;
@@ -860,12 +896,40 @@ always_comb begin: DP
 					val_N = 1'b1;
 				end
 			end
+`ifdef EN_NVME
+            else if(s_nvme_req.valid && (nvme_turn_C || !s_req.valid)) begin
+                s_nvme_req.ready = 1'b1;
+                nvme_turn_N = 1'b0;
+
+                if(s_nvme_req.data.len != 0) begin
+                    // Lock the mutex
+                    lock = 1'b1;
+
+                    // Translation only, no DMA is issued
+                    nvme_N = 1'b1;
+                    pid_N = s_nvme_req.data.pid;
+                    dest_N = 0;
+                    last_N = 1'b1;
+                    host_N = 1'b0;
+                    strm_N = STRM_HOST;
+                    vaddr_N = s_nvme_req.data.vaddr;
+                    len_N = s_nvme_req.data.len;
+                    val_N = 1'b1;
+                end
+            end
+`endif
             else if(s_req.valid) begin
                 s_req.ready = 1'b1;
+`ifdef EN_NVME
+                nvme_turn_N = 1'b1;
+`endif
 
 				if(s_req.data.len != 0) begin
 					// Lock the mutex
 					lock = 1'b1;
+`ifdef EN_NVME
+                    nvme_N = 1'b0;
+`endif
 
 					// Request
 					pid_N = s_req.data.pid;
@@ -995,7 +1059,12 @@ always_comb begin: DP
                 pf_miss_N.vaddr = vaddr_C;
                 pf_miss_N.len = len_C;
                 pf_miss_N.pid = pid_C;
+`ifdef EN_NVME
+                // NVMe faults map the pages where they are (no migration), see STRM_NVME_PF
+                pf_miss_N.strm = nvme_C ? STRM_NVME_PF : strm_C;
+`else
                 pf_miss_N.strm = strm_C;
+`endif
                 cch_cnt_N = 0;
             end
         end
@@ -1003,28 +1072,34 @@ always_comb begin: DP
 		ST_HIT_LARGE: begin
 			data_l_N = lTlb.data;
             vaddr_delta_L_N = PG_L_SIZE - vaddr_C[PG_L_BITS-1:0];
-            // Capture is-host from the LARGE entry while lTlb.data is fresh.
+`ifdef EN_NVME
+            // The entry's stream tells NVMe whether the page is in host or card memory
             nvme_is_host_N = (lTlb.data[STRM_L_OFFS+:STRM_BITS] == STRM_HOST);
+`endif
 		end
 
 		ST_HIT_SMALL: begin
             data_s_N = sTlb.data;
             vaddr_delta_S_N = PG_S_SIZE - vaddr_C[PG_S_BITS-1:0];
-            // Capture is-host from the SMALL entry while sTlb.data is fresh.
+`ifdef EN_NVME
             nvme_is_host_N = (sTlb.data[STRM_S_OFFS+:STRM_BITS] == STRM_HOST);
+`endif
 		end
 
 		ST_CALC_LARGE: begin
 			paddr_N =  {data_l_C[PHY_L_OFFS+:PHY_L_BITS], vaddr_C[0+:PG_L_BITS]};
-			// NVMe: clamp each segment to 4KB (one MMU response per PRP entry)
-			if(strm_C == STRM_NVME) begin
+`ifdef EN_NVME
+			// NVMe: clamp each segment to 4 KB (one response per PRP entry)
+			if(nvme_C) begin
 				plen_N = len_C;
 				if((PG_S_SIZE - vaddr_C[PG_S_BITS-1:0]) < plen_N) plen_N = PG_S_SIZE - vaddr_C[PG_S_BITS-1:0];
 				if(vaddr_delta_L_C < plen_N)                      plen_N = vaddr_delta_L_C;
 				len_N   = len_C - plen_N;
 				vaddr_N = vaddr_C + plen_N;
 			end
-			else if(len_C > vaddr_delta_L_C) begin
+			else
+`endif
+			if(len_C > vaddr_delta_L_C) begin
 				plen_N = vaddr_delta_L_C;
 				len_N = len_C - vaddr_delta_L_C;
 				vaddr_N += vaddr_delta_L_C;
@@ -1190,8 +1265,8 @@ always_comb begin: DP
             m_nvme_rsp.data.is_host = 1'b0;
             m_nvme_rsp.data.last    = 1'b1;
 
+            // Only reached after a failed page fault, which already released the mutex
             if (m_nvme_rsp.ready) begin
-                unlock_N = 1'b1;
                 val_N    = 1'b0;
             end
         end
@@ -1203,7 +1278,7 @@ always_comb begin: DP
 end
 
 // Cache buff.
-axis_data_fifo_cch_req_192 inst_cch_buff (
+axis_data_fifo_cch_req_128 inst_cch_buff (
   .s_axis_aresetn(aresetn),
   .s_axis_aclk(aclk),
   .s_axis_tvalid(cch_buff_sink.valid),

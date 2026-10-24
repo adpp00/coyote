@@ -48,7 +48,7 @@ module shell_ctrl_cc (
     AXI4.m              axi_nvme_prp,
     AXI4.m              axi_nvme_sq,
     AXI4.m              axi_nvme_cq,
-    {% if cnfg.en_mem %}
+    {% if cnfg.en_nvme_card %}
     AXI4.m              axi_card_mem,
     {% endif %}
 {% endif %}
@@ -81,6 +81,9 @@ design_ctrl inst_design_ctrl (
     .axi_main_arlock(axi_main.arlock),
     .axi_main_arprot(axi_main.arprot),
     .axi_main_arqos(axi_main.arqos),
+    {% if cnfg.fpga_arch == 'ultrascale_plus' and not cnfg.en_nvme_host %}
+    .axi_main_arregion(axi_main.arregion),
+    {% endif %}
     .axi_main_arsize(axi_main.arsize),
     .axi_main_arready(axi_main.arready),
     .axi_main_arvalid(axi_main.arvalid),
@@ -92,6 +95,9 @@ design_ctrl inst_design_ctrl (
     .axi_main_awlock(axi_main.awlock),
     .axi_main_awprot(axi_main.awprot),
     .axi_main_awqos(axi_main.awqos),
+    {% if cnfg.fpga_arch == 'ultrascale_plus' and not cnfg.en_nvme_host %}
+    .axi_main_awregion(axi_main.awregion),
+    {% endif %}
     .axi_main_awsize(axi_main.awsize),
     .axi_main_awready(axi_main.awready),
     .axi_main_awvalid(axi_main.awvalid),
@@ -230,33 +236,45 @@ design_ctrl inst_design_ctrl (
     .axi_nvme_sq_araddr(axi_nvme_sq.araddr),
     .axi_nvme_sq_arburst(axi_nvme_sq.arburst),
     .axi_nvme_sq_arcache(axi_nvme_sq.arcache),
+    {% if cnfg.fpga_arch == 'ultrascale_plus' %}
     .axi_nvme_sq_arid(axi_nvme_sq.arid),
+    {% endif %}
     .axi_nvme_sq_arlen(axi_nvme_sq.arlen),
     .axi_nvme_sq_arlock(axi_nvme_sq.arlock),
     .axi_nvme_sq_arprot(axi_nvme_sq.arprot),
     .axi_nvme_sq_arqos(axi_nvme_sq.arqos),
+    {% if cnfg.fpga_arch == 'ultrascale_plus' %}
     .axi_nvme_sq_arregion(axi_nvme_sq.arregion),
+    {% endif %}
     .axi_nvme_sq_arready(axi_nvme_sq.arready),
     .axi_nvme_sq_arsize(axi_nvme_sq.arsize),
     .axi_nvme_sq_arvalid(axi_nvme_sq.arvalid),
     .axi_nvme_sq_awaddr(axi_nvme_sq.awaddr),
     .axi_nvme_sq_awburst(axi_nvme_sq.awburst),
     .axi_nvme_sq_awcache(axi_nvme_sq.awcache),
+    {% if cnfg.fpga_arch == 'ultrascale_plus' %}
     .axi_nvme_sq_awid(axi_nvme_sq.awid),
+    {% endif %}
     .axi_nvme_sq_awlen(axi_nvme_sq.awlen),
     .axi_nvme_sq_awlock(axi_nvme_sq.awlock),
     .axi_nvme_sq_awprot(axi_nvme_sq.awprot),
     .axi_nvme_sq_awqos(axi_nvme_sq.awqos),
+    {% if cnfg.fpga_arch == 'ultrascale_plus' %}
     .axi_nvme_sq_awregion(axi_nvme_sq.awregion),
+    {% endif %}
     .axi_nvme_sq_awready(axi_nvme_sq.awready),
     .axi_nvme_sq_awsize(axi_nvme_sq.awsize),
     .axi_nvme_sq_awvalid(axi_nvme_sq.awvalid),
+    {% if cnfg.fpga_arch == 'ultrascale_plus' %}
     .axi_nvme_sq_bid(axi_nvme_sq.bid),
+    {% endif %}
     .axi_nvme_sq_bready(axi_nvme_sq.bready),
     .axi_nvme_sq_bresp(axi_nvme_sq.bresp),
     .axi_nvme_sq_bvalid(axi_nvme_sq.bvalid),
     .axi_nvme_sq_rdata(axi_nvme_sq.rdata),
+    {% if cnfg.fpga_arch == 'ultrascale_plus' %}
     .axi_nvme_sq_rid(axi_nvme_sq.rid),
+    {% endif %}
     .axi_nvme_sq_rlast(axi_nvme_sq.rlast),
     .axi_nvme_sq_rready(axi_nvme_sq.rready),
     .axi_nvme_sq_rresp(axi_nvme_sq.rresp),
@@ -297,7 +315,7 @@ design_ctrl inst_design_ctrl (
     .axi_nvme_cq_wready(axi_nvme_cq.wready),
     .axi_nvme_cq_wstrb(axi_nvme_cq.wstrb),
     .axi_nvme_cq_wvalid(axi_nvme_cq.wvalid),
-    {% if cnfg.en_mem %}
+    {% if cnfg.en_nvme_card %}
     .axi_card_mem_araddr(axi_card_mem.araddr),
     .axi_card_mem_arburst(axi_card_mem.arburst),
     .axi_card_mem_arcache(axi_card_mem.arcache),
@@ -392,4 +410,22 @@ design_ctrl inst_design_ctrl (
     .sys_reset(sys_reset)
 );
 
+{% if cnfg.en_nvme_host %}
+// The NVMe BRAM masters do not carry IDs or regions out of the BD (except the SQ on UltraScale+)
+assign axi_nvme_prp.arid     = '0;
+assign axi_nvme_prp.awid     = '0;
+assign axi_nvme_prp.arregion = '0;
+assign axi_nvme_prp.awregion = '0;
+assign axi_nvme_cq.arid      = '0;
+assign axi_nvme_cq.awid      = '0;
+assign axi_nvme_cq.arregion  = '0;
+assign axi_nvme_cq.awregion  = '0;
+{% if cnfg.fpga_arch != 'ultrascale_plus' %}
+assign axi_nvme_sq.arid      = '0;
+assign axi_nvme_sq.awid      = '0;
+assign axi_nvme_sq.arregion  = '0;
+assign axi_nvme_sq.awregion  = '0;
+{% endif %}
+
+{% endif %}
 endmodule

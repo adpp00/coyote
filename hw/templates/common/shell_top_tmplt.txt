@@ -444,8 +444,8 @@ module shell_top (
     AXI4 axi_nvme_sq ();
     AXI4 axi_nvme_cq ();
     {% endif %}
-    {% if cnfg.en_mem or cnfg.en_nvme_pl %}
-    {% if cnfg.en_mem %}
+    {% if cnfg.en_nvme_card or cnfg.en_nvme_pl %}
+    {% if cnfg.en_nvme_card %}
     // NVMe card-memory traffic is routed to one dedicated HBM channel.
     {% else %}
     // Placeholder for design_plnvme's disabled card-memory DMA master.
@@ -517,7 +517,7 @@ module shell_top (
         .axi_nvme_prp(axi_nvme_prp),
         .axi_nvme_sq(axi_nvme_sq),
         .axi_nvme_cq(axi_nvme_cq),
-    {% if cnfg.en_mem %}
+    {% if cnfg.en_nvme_card %}
         .axi_card_mem(axi_nvme_card_mem),
     {% endif %}
 {% endif %}
@@ -841,7 +841,7 @@ module shell_top (
     always_comb axi_nvme_host.tie_off_s();
 {% endif %}
 
-{% if not cnfg.en_mem %}
+{% if not cnfg.en_nvme_card %}
     // Card-memory DMA is unavailable when EN_MEM=0, as in the HOST-NVMe flow.
     // Keep the BD port present but disconnected until card memory is enabled.
     always_comb axi_nvme_card_mem.tie_off_s();
@@ -1355,7 +1355,7 @@ module shell_top (
     
     AXI4 #(.AXI4_DATA_BITS(AXI_DDR_BITS)) axi_mem [N_MEM_CHAN] ();
 
-{% if cnfg.en_nvme and cnfg.en_mem %}
+{% if cnfg.en_nvme_card %}
     // Keep the same HBM address mapping as Coyote's other memory paths while
     // using NVMe-safe AXI fragment and response bookkeeping.
     axi_stripe_nvme inst_strp_nvme_card (
