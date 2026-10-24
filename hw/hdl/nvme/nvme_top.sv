@@ -24,7 +24,6 @@
  * SOFTWARE.
  */
 
-
 `timescale 1ns/1ps
 
 import lynxTypes::*;
@@ -41,13 +40,13 @@ module nvme_top (
     input  logic        aclk,
     input  logic        aresetn,
 
-    // Per-region user interfaces (req_t with strm=STRM_NVME)
-    metaIntf.s          s_nvme_user_req [N_REGIONS],  // req_t
+    // Per-region user interfaces
+    metaIntf.s          s_nvme_user_req [N_REGIONS],  // nvme_req_t
     metaIntf.m          m_nvme_user_rsp [N_REGIONS],  // device[15:12], CID[11:4], local error[3:0]
     metaIntf.m          m_nvme_cpl      [N_REGIONS],  // nvme_cqe_t
 
-    // MMU interface (req_t with strm=STRM_NVME → bpss_rd_sq path)
-    metaIntf.m          m_nvme_rd_sq,     // req_t
+    // MMU
+    metaIntf.m          m_nvme_rd_sq,     // nvme_mmu_req_t
     metaIntf.s          s_nvme_rd_rsp,    // nvme_mmu_rsp_t
 
 `ifdef EN_NVME_HOST
@@ -99,11 +98,12 @@ module nvme_top (
     // Config signals
     logic [63:0] fpga_bar_base;
     logic [63:0] fpga_prp_bar_base;
+    logic        card_window_en;
     assign fpga_prp_bar_base = fpga_bar_base + PRP_OFFSET;
 
     // Arbitrated user interfaces (N_REGIONS → 1)
-    metaIntf #(.STYPE(req_t)) user_req_arb   ();
-    metaIntf #(.STYPE(req_t)) user_req_arb_q ();
+    metaIntf #(.STYPE(nvme_req_t)) user_req_arb   ();
+    metaIntf #(.STYPE(nvme_req_t)) user_req_arb_q ();
     // CID → region map for completion routing
     logic [N_REGIONS_BITS-1:0]  cid_region [N_NVME][1 << NVME_QUEUE_BITS];
     logic [(1 << NVME_QUEUE_BITS)-1:0] cid_live [N_NVME];
@@ -115,7 +115,7 @@ module nvme_top (
     // Pipeline internal signals
     metaIntf #(.STYPE(nvme_info_req_t))    tbl_req       ();
     metaIntf #(.STYPE(nvme_info_rsp_t))    tbl_rsp       ();
-    metaIntf #(.STYPE(req_t))    cmd_parsed        ();
+    metaIntf #(.STYPE(nvme_req_t))         cmd_parsed    ();
     metaIntf #(.STYPE(nvme_prp_req_t))     prp_req       ();
     metaIntf #(.STYPE(nvme_prp_req_t))     prp_req_q     ();
     metaIntf #(.STYPE(nvme_prp_rsp_t))     prp_rsp       ();
@@ -132,7 +132,7 @@ module nvme_top (
     metaIntf #(.STYPE(update_tbl_t))       update_tbl_int();
     metaIntf #(.STYPE(nvme_perm_update_t)) perm_update   ();
     metaIntf #(.STYPE(cq_head_update_t))   cq_head_upd   ();
-    metaIntf #(.STYPE(req_t))              mmu_req_int   ();
+    metaIntf #(.STYPE(nvme_mmu_req_t))     mmu_req_int   ();
 
     metaIntf #(.STYPE(nvme_user_rsp_t))    user_rsp_pre  ();
     logic [15:0] cmd_error;
@@ -208,8 +208,8 @@ module nvme_top (
     // N_REGIONS -> 1
 `ifdef MULT_REGIONS
     // Per-region credit check + arbiter (fair admission across regions)
-    metaIntf #(.STYPE(req_t)) user_req_arb_pre ();
-    metaIntf #(.STYPE(req_t)) user_req_cred [N_REGIONS] ();
+    metaIntf #(.STYPE(nvme_req_t)) user_req_arb_pre ();
+    metaIntf #(.STYPE(nvme_req_t)) user_req_cred [N_REGIONS] ();
     logic [N_REGIONS_BITS-1:0] arb_id;
 
     for (genvar i = 0; i < N_REGIONS; i++) begin : gen_user_req_cred
@@ -406,7 +406,8 @@ module nvme_top (
         .s_nvme_mmu_rsp       (s_nvme_rd_rsp),
         .m_nvme_prp_write_req (prp_write_strm),
         .FPGA_BAR_BASE        (fpga_bar_base),
-        .FPGA_PRP_BAR_BASE    (fpga_prp_bar_base)
+        .FPGA_PRP_BAR_BASE    (fpga_prp_bar_base),
+        .CARD_WINDOW_EN       (card_window_en)
     );
 
     // Stage 2: Combine cmd_dispatched + prp_rsp → SQE + doorbell
@@ -482,7 +483,8 @@ module nvme_top (
 `endif
         .m_update_tbl      (update_tbl),
         .m_perm_update     (perm_update),
-        .fpga_bar_base     (fpga_bar_base)
+        .fpga_bar_base     (fpga_bar_base),
+        .card_window_en    (card_window_en)
     );
 
     // SQ Doorbell Writer

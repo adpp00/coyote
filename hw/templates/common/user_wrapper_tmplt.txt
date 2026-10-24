@@ -180,7 +180,7 @@ module design_user_wrapper_{{ c_reg }} (
     // NVMe
     (* io_buffer_type = "none" *) output logic                                nvme_sq_valid,
     (* io_buffer_type = "none" *) input  logic                                nvme_sq_ready,
-    (* io_buffer_type = "none" *) output logic[$bits(req_t)-1:0]              nvme_sq_data,
+    (* io_buffer_type = "none" *) output logic[$bits(nvme_req_t)-1:0]         nvme_sq_data,
 
     (* io_buffer_type = "none" *) input  logic                                nvme_cq_rsp_valid,
     (* io_buffer_type = "none" *) output logic                                nvme_cq_rsp_ready,
@@ -503,8 +503,8 @@ module design_user_wrapper_{{ c_reg }} (
 
 {% if cnfg.en_nvme %}
     // NVMe
-    metaIntf #(.STYPE(req_t)) nvme_sq (.*);
-    metaIntf #(.STYPE(req_t)) nvme_sq_int (.*);
+    metaIntf #(.STYPE(nvme_req_t)) nvme_sq (.*);
+    metaIntf #(.STYPE(nvme_req_t)) nvme_sq_int (.*);
     metaIntf #(.STYPE(logic [15:0])) nvme_cq_rsp (.*);
     metaIntf #(.STYPE(logic [15:0])) nvme_cq_rsp_int (.*);
     metaIntf #(.STYPE(nvme_cqe_t)) nvme_cpl (.*);
@@ -598,7 +598,7 @@ module design_user_wrapper_{{ c_reg }} (
 {% endif %}
 {% if cnfg.en_nvme %}
     // NVMe desc
-    meta_reg #(.DATA_BITS($bits(req_t))) inst_reg_nvme_sq (.aclk(aclk), .aresetn(aresetn), .s_meta(nvme_sq_int), .m_meta(nvme_sq));
+    meta_reg #(.DATA_BITS($bits(nvme_req_t))) inst_reg_nvme_sq (.aclk(aclk), .aresetn(aresetn), .s_meta(nvme_sq_int), .m_meta(nvme_sq));
     meta_reg #(.DATA_BITS(16)) inst_reg_nvme_cq_rsp (.aclk(aclk), .aresetn(aresetn), .s_meta(nvme_cq_rsp), .m_meta(nvme_cq_rsp_int));
     meta_reg #(.DATA_BITS($bits(nvme_cqe_t))) inst_reg_nvme_cpl (.aclk(aclk), .aresetn(aresetn), .s_meta(nvme_cpl), .m_meta(nvme_cpl_int));
 

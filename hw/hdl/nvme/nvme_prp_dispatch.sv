@@ -24,7 +24,6 @@
  * SOFTWARE.
  */
 
-
 `timescale 1ns/1ps
 
 import lynxTypes::*;
@@ -39,7 +38,7 @@ module nvme_prp_dispatch (
     input  logic        aclk,
     input  logic        aresetn,
 
-    metaIntf.s          s_nvme_cmd_parsed,     // req_t
+    metaIntf.s          s_nvme_cmd_parsed,     // nvme_req_t
     metaIntf.s          s_nvme_info_rsp,   // nvme_info_rsp_t
     input logic [NVME_QUEUE_BITS-1:0] s_alloc_cid,
     output logic [NVME_QUEUE_BITS-1:0] m_cmd_cid,
@@ -57,7 +56,7 @@ module nvme_prp_dispatch (
     } state_t;
 
     state_t          state_C, state_N;
-    req_t  cmd_C, cmd_N;
+    nvme_req_t cmd_C, cmd_N;
     nvme_info_rsp_t  info_rsp_C, info_rsp_N;
     logic [NVME_QUEUE_BITS-1:0] cid_C;
     assign m_cmd_cid = cid_C;
@@ -151,6 +150,7 @@ module nvme_prp_dispatch (
                 // independently of the command's physical SQ slot below.
                 prp_req.sq_tail   = cid_C;
                 prp_req.vfid      = cmd_C.vfid[N_REGIONS_BITS-1:0];
+                prp_req.pid       = cmd_C.pid;
                 prp_req.writeRead = cmd_C.writeRead;
 
                 // Build cmd_dispatched

@@ -24,7 +24,6 @@
  * SOFTWARE.
  */
 
-
 `timescale 1ns/1ps
 
 import lynxTypes::*;
@@ -58,7 +57,8 @@ module nvme_cnfg_slave (
     metaIntf.m                      m_update_tbl,
     metaIntf.m                      m_perm_update,
 
-    output logic [63:0]             fpga_bar_base
+    output logic [63:0]             fpga_bar_base,
+    output logic                    card_window_en
     );
 
     // Constants
@@ -74,7 +74,7 @@ module nvme_cnfg_slave (
     // Register map (byte offsets: index * 8)
     //   --- Device info registers ---
     //   0x00  FPGA_BAR_BASE_REG
-    //   0x08  RSVD0
+    //   0x08  CARD_WINDOW       (bit0=card window enabled)
     //   0x10  DEV_ID
     //   0x18  NSID
     //   0x20  LBAF
@@ -86,7 +86,7 @@ module nvme_cnfg_slave (
     //   0x48  PERM_DEV_ID
     //   0x50  PERM_LBA_OFFSET
     //   0x58  PERM_LBA_SIZE
-    //   0x60  PERM_VALID        (W1S trigger: bit0=write to perm table)
+    //   0x60  PERM_VALID        (W1S trigger: bit0=write to perm table, bit1=revoke entry)
 `ifdef EN_NVME_PL
     //   --- Read-only PL discovery registers ---
     //   0x68  PL_STATUS         (bit0=ready, bit1=done, bit2=error,
@@ -98,7 +98,7 @@ module nvme_cnfg_slave (
     //   0x88  PL_MDTS_CAP       (bits[7:0]=MDTS, bits[11:8]=CAP.MPSMIN)
 `endif
     localparam int unsigned FPGA_BAR_BASE_REG   = 0;
-    localparam int unsigned RSVD0               = 1;
+    localparam int unsigned CARD_WINDOW         = 1;
     localparam int unsigned DEV_ID              = 2;
     localparam int unsigned NSID                = 3;
     localparam int unsigned LBAF                = 4;
@@ -157,7 +157,7 @@ module nvme_cnfg_slave (
             if (ctrl_reg_wren) begin
                 case (axi_awaddr[ADDR_LSB+:ADDR_MSB])
                     FPGA_BAR_BASE_REG,
-                    RSVD0,
+                    CARD_WINDOW,
                     DEV_ID,
                     NSID,
                     LBAF,
@@ -202,11 +202,12 @@ module nvme_cnfg_slave (
                         end
 
                         // Trigger permission update
-                        if (s_nvme_cnfg.wdata[0]) begin
+                        if (s_nvme_cnfg.wdata[0] || s_nvme_cnfg.wdata[1]) begin
                             m_perm_update.data.region_id  <= ctrl_reg[PERM_REGION_ID][REGION_ID_BITS-1:0];
                             m_perm_update.data.dev_id     <= ctrl_reg[PERM_DEV_ID][N_NVME_BITS-1:0];
                             m_perm_update.data.lba_offset <= ctrl_reg[PERM_LBA_OFFSET][63:0];
                             m_perm_update.data.lba_size   <= ctrl_reg[PERM_LBA_SIZE][63:0];
+                            m_perm_update.data.valid      <= !s_nvme_cnfg.wdata[1];
                             m_perm_update.valid           <= 1'b1;
                         end
                     end
@@ -264,6 +265,7 @@ module nvme_cnfg_slave (
     // Output assignment
     always_comb begin
         fpga_bar_base = ctrl_reg[FPGA_BAR_BASE_REG][63:0];
+        card_window_en = ctrl_reg[CARD_WINDOW][0];
     end
 
     // Standard AXI-Lite control

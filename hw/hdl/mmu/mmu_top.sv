@@ -63,12 +63,14 @@ module mmu_top #(
     // Bypass
 	metaIntf.s 						    s_bpss_rd_sq [N_REGIONS],
 	metaIntf.s						    s_bpss_wr_sq [N_REGIONS],
-
-`ifdef EN_NVME
-    metaIntf.m                          m_nvme_rd_rsp,
-`endif
     metaIntf.m                          m_bpss_rd_cq [N_REGIONS],
     metaIntf.m                          m_bpss_wr_cq [N_REGIONS],
+
+`ifdef EN_NVME
+    // NVMe translations
+    metaIntf.s                          s_nvme_rd_sq,
+    metaIntf.m                          m_nvme_rd_rsp,
+`endif
 
 `ifdef EN_STRM
 	// Streaming read/write requests from/to vFPGAs
@@ -155,18 +157,26 @@ module mmu_top #(
 `endif
 
 `ifdef EN_NVME
+metaIntf #(.STYPE(nvme_mmu_req_t)) nvme_rd_sq_arr [N_REGIONS] ();
 metaIntf #(.STYPE(nvme_mmu_rsp_t)) nvme_rd_rsp_arr [N_REGIONS] ();
 
 `ifdef MULT_REGIONS
-// Multi-region: priority-OR mux of per-region NVMe MMU responses
+// NVMe routing
+logic [N_REGIONS-1:0]  nvme_sq_ready;
 logic [N_REGIONS-1:0]  nvme_rsp_valid;
 nvme_mmu_rsp_t         nvme_rsp_data [N_REGIONS];
 
-for (genvar t = 0; t < N_REGIONS; t++) begin : gen_nvme_rsp_collect
+for (genvar t = 0; t < N_REGIONS; t++) begin : gen_nvme_route
+    assign nvme_rd_sq_arr[t].valid  = s_nvme_rd_sq.valid && (s_nvme_rd_sq.data.vfid == t);
+    assign nvme_rd_sq_arr[t].data   = s_nvme_rd_sq.data;
+    assign nvme_sq_ready[t]         = nvme_rd_sq_arr[t].ready;
+
     assign nvme_rsp_valid[t]        = nvme_rd_rsp_arr[t].valid;
     assign nvme_rsp_data[t]         = nvme_rd_rsp_arr[t].data;
     assign nvme_rd_rsp_arr[t].ready = m_nvme_rd_rsp.ready;
 end
+
+assign s_nvme_rd_sq.ready = nvme_sq_ready[s_nvme_rd_sq.data.vfid];
 
 always_comb begin
     m_nvme_rd_rsp.valid = |nvme_rsp_valid;
@@ -175,10 +185,8 @@ always_comb begin
         if (nvme_rsp_valid[t]) m_nvme_rd_rsp.data = nvme_rsp_data[t];
 end
 `else
-// Single region: take region 0's NVMe MMU response directly.
-assign m_nvme_rd_rsp.valid      = nvme_rd_rsp_arr[0].valid;
-assign m_nvme_rd_rsp.data       = nvme_rd_rsp_arr[0].data;
-assign nvme_rd_rsp_arr[0].ready = m_nvme_rd_rsp.ready;
+`META_ASSIGN(s_nvme_rd_sq, nvme_rd_sq_arr[0])
+`META_ASSIGN(nvme_rd_rsp_arr[0], m_nvme_rd_rsp)
 `endif
 `endif
 
@@ -206,6 +214,7 @@ for(genvar i = 0; i < N_REGIONS; i++) begin
         .s_bpss_rd_sq(s_bpss_rd_sq[i]), // 
 		.s_bpss_wr_sq(s_bpss_wr_sq[i]), // 
     `ifdef EN_NVME
+        .s_nvme_rd_sq(nvme_rd_sq_arr[i]),
         .m_nvme_rd_rsp(nvme_rd_rsp_arr[i]),
     `endif
     `ifdef EN_STRM

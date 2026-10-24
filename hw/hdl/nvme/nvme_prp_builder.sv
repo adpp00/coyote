@@ -24,7 +24,6 @@
  * SOFTWARE.
  */
 
-
 `timescale 1ns/1ps
 
 import lynxTypes::*;
@@ -45,13 +44,14 @@ module nvme_prp_builder #(
     metaIntf.m          m_nvme_prp_rsp,       // nvme_prp_rsp_t
     output logic       m_prp_fault,          // accompanies PRP response handshake
 
-    metaIntf.m          m_nvme_mmu_req,       // req_t (strm=STRM_NVME)
+    metaIntf.m          m_nvme_mmu_req,       // nvme_mmu_req_t
     metaIntf.s          s_nvme_mmu_rsp,       // nvme_mmu_rsp_t
 
     metaIntf.m          m_nvme_prp_write_req, // nvme_prp_write_t
 
     input  logic [63:0] FPGA_BAR_BASE,
-    input  logic [63:0] FPGA_PRP_BAR_BASE
+    input  logic [63:0] FPGA_PRP_BAR_BASE,
+    input  logic        CARD_WINDOW_EN
 );
 
     // PRP-list window: one 4-KiB page per CID and a fixed 1-MiB stride per
@@ -124,6 +124,15 @@ module nvme_prp_builder #(
 `endif
 `endif
 
+    // SSD-reachable page
+    function automatic logic mmu_rsp_reachable(input nvme_mmu_rsp_t rsp);
+`ifdef EN_NVME_PL
+        mmu_rsp_reachable = rsp.is_host || (NVME_CARD_FLOW != 0);
+`else
+        mmu_rsp_reachable = rsp.is_host || ((NVME_CARD_FLOW != 0) && CARD_WINDOW_EN);
+`endif
+    endfunction
+
     // State machine
     typedef enum logic [3:0] {
         ST_IDLE              = 4'd0,
@@ -150,7 +159,7 @@ module nvme_prp_builder #(
     nvme_mmu_rsp_t   mmu_rsp_C, mmu_rsp_N;
 
     // Temporaries (module scope)
-    req_t            mmu_req;
+    nvme_mmu_req_t   mmu_req;
 
     // Combinational logic
     always_comb begin
@@ -190,11 +199,10 @@ module nvme_prp_builder #(
             // ST_SEND_MMU_PRP1: Send MMU request for PRP1
             ST_SEND_MMU_PRP1: begin
                 mmu_req       = '0;
-                mmu_req.strm  = STRM_NVME;
                 mmu_req.vfid  = prp_req_C.vfid;
+                mmu_req.pid   = prp_req_C.pid;
                 mmu_req.vaddr = prp_req_C.vaddr;
                 mmu_req.len   = prp_req_C.len;
-                mmu_req.last  = 1'b1;
 
                 m_nvme_mmu_req.valid = 1'b1;
                 m_nvme_mmu_req.data  = mmu_req;
@@ -210,7 +218,7 @@ module nvme_prp_builder #(
                 if (s_nvme_mmu_rsp.valid) begin
                     mmu_rsp_N = s_nvme_mmu_rsp.data;
                     // Translation fault → abort
-                    if (s_nvme_mmu_rsp.data.fault)
+                    if (s_nvme_mmu_rsp.data.fault || !mmu_rsp_reachable(s_nvme_mmu_rsp.data))
                         state_N = ST_FAULT;
                     else
                         state_N = ST_CHECK_SIZE;
@@ -237,13 +245,14 @@ module nvme_prp_builder #(
                     prp_rsp_N.prp1 = mmu_rsp_C.paddr;
 `endif
 
-                if (prp_req_C.len <= 4096) begin
-                    // 4KB: Only PRP1 needed
+                // PRP shape
+                if (mmu_rsp_C.last) begin
+                    // One page: PRP1 only
                     prp_rsp_N.prp2 = 64'd0;
                     state_N = ST_SEND_PRP_4KB;
                 end
                 else begin
-                    // >4KB: Need PRP2, send MMU request
+                    // More pages
                     state_N = ST_SEND_MMU_PRP2;
                 end
 `ifdef EN_NVME_PL
@@ -274,7 +283,7 @@ module nvme_prp_builder #(
                 if (s_nvme_mmu_rsp.valid) begin
                     mmu_rsp_N = s_nvme_mmu_rsp.data;
 
-                    if (s_nvme_mmu_rsp.data.fault
+                    if (s_nvme_mmu_rsp.data.fault || !mmu_rsp_reachable(s_nvme_mmu_rsp.data)
 `ifdef EN_NVME_PL
                         || (s_nvme_mmu_rsp.data.is_host &&
                             !pl_host_paddr_valid(s_nvme_mmu_rsp.data.paddr))
@@ -283,8 +292,8 @@ module nvme_prp_builder #(
                         // Translation fault → abort
                         state_N = ST_FAULT;
                     end
-                    else if (prp_req_C.len <= 8192) begin
-                        // 8KB: PRP2 is direct address
+                    else if (s_nvme_mmu_rsp.data.last) begin
+                        // Two pages
                         prp_rsp_N = prp_rsp_C;
 `ifdef EN_NVME_PL
                         prp_rsp_N.prp2 = pl_encode_paddr(
@@ -299,7 +308,7 @@ module nvme_prp_builder #(
                         state_N = ST_SEND_PRP_8KB;
                     end
                     else begin
-                        // >8KB: PRP2 points to PRP list
+                        // More pages: PRP list
                         prp_rsp_N = prp_rsp_C;
 `ifdef EN_NVME_PL
                         // Disjoint fields: 16-MiB aligned base, device in
@@ -376,7 +385,7 @@ module nvme_prp_builder #(
                 if (s_nvme_mmu_rsp.valid) begin
                     mmu_rsp_N = s_nvme_mmu_rsp.data;
 
-                    if (s_nvme_mmu_rsp.data.fault
+                    if (s_nvme_mmu_rsp.data.fault || !mmu_rsp_reachable(s_nvme_mmu_rsp.data)
 `ifdef EN_NVME_PL
                         || (s_nvme_mmu_rsp.data.is_host &&
                             !pl_host_paddr_valid(s_nvme_mmu_rsp.data.paddr))

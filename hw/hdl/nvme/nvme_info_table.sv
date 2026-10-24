@@ -24,7 +24,6 @@
  * SOFTWARE.
  */
 
-
 `timescale 1ns/1ps
 
 import lynxTypes::*;
@@ -45,7 +44,7 @@ module nvme_info_table #(
     metaIntf.s          s_tbl_req,         // nvme_info_req_t (with region_id, naddr, len)
     metaIntf.m          m_tbl_rsp,         // nvme_info_rsp_t (with lba_offset)
 
-    // Internal sidebands; shared request/response types stay unchanged.
+    // CID allocation
     output logic [NVME_QUEUE_BITS-1:0] alloc_cid,
     input logic cpl_valid,
     input logic [N_NVME_BITS-1:0] cpl_dev,
@@ -282,8 +281,9 @@ module nvme_info_table #(
                          !perm_table[s_tbl_req.data.region_id][s_tbl_req.data.dev_id].valid) begin
                     rsp_N.error = NVME_PERMISSION_DENIED;
                 end
-                // Permission check: offset + len within allowed range?
-                else if ((s_tbl_req.data.naddr + s_tbl_req.data.len) >
+                // Permission check: non-empty and within allowed range?
+                else if (s_tbl_req.data.len == '0 ||
+                         (s_tbl_req.data.naddr + s_tbl_req.data.len) >
                          perm_table[s_tbl_req.data.region_id][s_tbl_req.data.dev_id].lba_size) begin
                     rsp_N.error = NVME_PERMISSION_DENIED;
                 end
@@ -348,7 +348,7 @@ module nvme_info_table #(
                      s_perm_update.data.dev_id < MAX_NVME_DEVICES && s_perm_update.data.region_id < N_REGIONS) begin
                 perm_table[s_perm_update.data.region_id][s_perm_update.data.dev_id].lba_offset <= s_perm_update.data.lba_offset;
                 perm_table[s_perm_update.data.region_id][s_perm_update.data.dev_id].lba_size   <= s_perm_update.data.lba_size;
-                perm_table[s_perm_update.data.region_id][s_perm_update.data.dev_id].valid      <= 1'b1;
+                perm_table[s_perm_update.data.region_id][s_perm_update.data.dev_id].valid      <= s_perm_update.data.valid;
             end
             if (allocate) rsp_cid_C <= candidate_cid_C;
         end

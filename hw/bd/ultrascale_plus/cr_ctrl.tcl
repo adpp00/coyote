@@ -53,12 +53,21 @@ proc cr_bd_design_ctrl { parentCell } {
     CONFIG.PROTOCOL {AXI4LITE} \
   ] $axi_cnfg
 
+  # NVMe P2P bursts
+  if {$cnfg(en_nvme_host) eq 1} {
+    set axi_main_burst 64
+    set axi_main_outs 16
+  } else {
+    set axi_main_burst 16
+    set axi_main_outs 8
+  }
+
   set axi_main [ create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:aximm_rtl:1.0 axi_main ]
   set_property -dict [list \
-    CONFIG.MAX_BURST_LENGTH {64} \
+    CONFIG.MAX_BURST_LENGTH $axi_main_burst \
     CONFIG.ID_WIDTH {6} \
-    CONFIG.NUM_WRITE_OUTSTANDING {16} \
-    CONFIG.NUM_READ_OUTSTANDING {16} \
+    CONFIG.NUM_WRITE_OUTSTANDING $axi_main_outs \
+    CONFIG.NUM_READ_OUTSTANDING $axi_main_outs \
     CONFIG.SUPPORTS_NARROW_BURST {0} \
     CONFIG.ADDR_WIDTH {64} \
     CONFIG.PROTOCOL {AXI4} \
@@ -119,7 +128,7 @@ proc cr_bd_design_ctrl { parentCell } {
       CONFIG.HAS_BRESP {1} CONFIG.HAS_BURST {1} CONFIG.HAS_CACHE {1} CONFIG.HAS_LOCK {1} CONFIG.HAS_PROT {1} \
       CONFIG.HAS_RRESP {1} CONFIG.HAS_WSTRB {1} CONFIG.NUM_READ_OUTSTANDING {8} CONFIG.NUM_WRITE_OUTSTANDING {8} ] $axi_nvme_cq
 
-    if {$cnfg(en_mem) eq 1} {
+    if {$cnfg(en_nvme_card) eq 1} {
       # axi_card_mem: HBM direct port for SSD P2P (top HBM channel)
       set axi_card_mem [create_bd_intf_port -mode Master -vlnv xilinx.com:interface:aximm_rtl:1.0 axi_card_mem]
       set_property -dict [list \
@@ -166,7 +175,7 @@ proc cr_bd_design_ctrl { parentCell } {
             }
             if {$cnfg(en_nvme_host) eq 1} {
                 append cmd ":axi_nvme_prp:axi_nvme_sq:axi_nvme_cq"
-                if {$cnfg(en_mem) eq 1} {
+                if {$cnfg(en_nvme_card) eq 1} {
                     append cmd ":axi_card_mem"
                 }
             }
@@ -209,7 +218,7 @@ set_property CONFIG.POLARITY ACTIVE_HIGH [get_bd_ports sys_reset]
      # Create instance: axi_interconnect_0, and set properties
   if {$cnfg(en_nvme_host) eq 1} {
     set nvme_mi 3
-    if {$cnfg(en_mem) eq 1} {
+    if {$cnfg(en_nvme_card) eq 1} {
       incr nvme_mi
     }
   } else {
@@ -300,7 +309,7 @@ create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 proc_sys_reset_u
       set nvme_mi_base [expr {$cnfg(n_reg) + 1}]
     }
     set nvme_master_list [list 0 axi_nvme_prp 1 axi_nvme_sq 2 axi_nvme_cq]
-    if {$cnfg(en_mem) eq 1} {
+    if {$cnfg(en_nvme_card) eq 1} {
       lappend nvme_master_list 3 axi_card_mem
     }
     foreach {nvme_off nvme_port} $nvme_master_list {
@@ -334,16 +343,23 @@ create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 proc_sys_reset_u
   set cmd_rst "connect_bd_net \[get_bd_pins proc_sys_reset_a/interconnect_aresetn] \[get_bd_pins axi_interconnect_0/M00_ARESETN] "
 
   if {$cnfg(en_avx) eq 1} { 
-    set ic_last [expr {2 * $cnfg(n_reg)}]
+    for {set i 1}  {$i <= 2 * $cnfg(n_reg)} {incr i} {
+      append cmd_clk [format " \[get_bd_pins axi_interconnect_0/M%02d_ACLK]" $i]
+      append cmd_rst [format " \[get_bd_pins axi_interconnect_0/M%02d_ARESETN]" $i]
+    }
   } else {
-    set ic_last $cnfg(n_reg)
+    for {set i 1}  {$i <= $cnfg(n_reg)} {incr i} {
+      append cmd_clk [format " \[get_bd_pins axi_interconnect_0/M%02d_ACLK]" $i]
+      append cmd_rst [format " \[get_bd_pins axi_interconnect_0/M%02d_ARESETN]" $i]
+    }
   }
+
+  # NVMe masters
   if {$cnfg(en_nvme_host) eq 1} {
-    set ic_last [expr {$ic_last + $nvme_mi}]
-  }
-  for {set i 1} {$i <= $ic_last} {incr i} {
-    append cmd_clk [format " \[get_bd_pins axi_interconnect_0/M%02d_ACLK]" $i]
-    append cmd_rst [format " \[get_bd_pins axi_interconnect_0/M%02d_ARESETN]" $i]
+    for {set i $nvme_mi_base}  {$i < $nvme_mi_base + $nvme_mi} {incr i} {
+      append cmd_clk [format " \[get_bd_pins axi_interconnect_0/M%02d_ACLK]" $i]
+      append cmd_rst [format " \[get_bd_pins axi_interconnect_0/M%02d_ARESETN]" $i]
+    }
   }
 
   eval $cmd_clk
@@ -378,7 +394,7 @@ create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 proc_sys_reset_u
     create_bd_addr_seg -range 0x00010000 -offset 0x04020000 [get_bd_addr_spaces /axi_main] [get_bd_addr_segs axi_nvme_cq/Reg]   SEG_axi_nvme_cq_Reg
     create_bd_addr_seg -range 0x01000000 -offset 0x05000000 [get_bd_addr_spaces /axi_main] [get_bd_addr_segs axi_nvme_prp/Reg]  SEG_axi_nvme_prp_Reg
 
-    if {$cnfg(en_mem) eq 1} {
+    if {$cnfg(en_nvme_card) eq 1} {
       # axi_card_mem: 256MB..16GB in power-of-two aligned segments
       create_bd_addr_seg -range 0x10000000  -offset 0x10000000  [get_bd_addr_spaces /axi_main] [get_bd_addr_segs axi_card_mem/Reg] SEG_axi_card_mem_256M
       create_bd_addr_seg -range 0x20000000  -offset 0x20000000  [get_bd_addr_spaces /axi_main] [get_bd_addr_segs axi_card_mem/Reg] SEG_axi_card_mem_512M

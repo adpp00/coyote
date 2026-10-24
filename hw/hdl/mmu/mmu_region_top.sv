@@ -50,6 +50,8 @@ module mmu_region_top #(
 	metaIntf.s						    s_bpss_wr_sq,
 
 `ifdef EN_NVME
+	// NVMe translations
+	metaIntf.s                          s_nvme_rd_sq,
 	metaIntf.m                          m_nvme_rd_rsp,
 `endif
 
@@ -105,8 +107,8 @@ localparam integer PHY_L_BITS = PADDR_BITS - PG_L_BITS;
 localparam integer PHY_S_BITS = PADDR_BITS - PG_S_BITS;
 localparam integer TAG_L_BITS = VADDR_BITS - HASH_L_BITS - PG_L_BITS;
 localparam integer TAG_S_BITS = VADDR_BITS - HASH_S_BITS - PG_S_BITS;
-localparam integer TLB_L_DATA_BITS = TAG_L_BITS + PID_BITS + STRM_BITS + 1 + PHY_L_BITS + HPID_BITS;
-localparam integer TLB_S_DATA_BITS = TAG_S_BITS + PID_BITS + STRM_BITS + 1 + PHY_S_BITS + HPID_BITS;
+localparam integer TLB_L_DATA_BITS = TAG_L_BITS + PID_BITS + 2 + PHY_L_BITS + HPID_BITS;
+localparam integer TLB_S_DATA_BITS = TAG_S_BITS + PID_BITS + 2 + PHY_S_BITS + HPID_BITS;
 
 // Tlb interfaces
 tlbIntf #(.TLB_INTF_DATA_BITS(TLB_L_DATA_BITS)) rd_lTlb ();
@@ -167,6 +169,10 @@ assign lTlb.pid   = mutex[1] ? wr_lTlb.pid : rd_lTlb.pid;
 assign sTlb.pid   = mutex[1] ? wr_sTlb.pid : rd_sTlb.pid;
 assign lTlb.strm  = mutex[1] ? wr_lTlb.strm : rd_lTlb.strm;
 assign sTlb.strm  = mutex[1] ? wr_sTlb.strm : rd_sTlb.strm;
+`ifdef EN_NVME
+assign lTlb.nvme  = mutex[1] ? wr_lTlb.nvme : rd_lTlb.nvme;
+assign sTlb.nvme  = mutex[1] ? wr_sTlb.nvme : rd_sTlb.nvme;
+`endif
 assign lTlb.wr    = mutex[1] ? wr_lTlb.wr : rd_lTlb.wr;
 assign sTlb.wr    = mutex[1] ? wr_sTlb.wr : rd_sTlb.wr;
 assign lTlb.valid = mutex[1] ? wr_lTlb.valid : rd_lTlb.valid;
@@ -279,6 +285,7 @@ tlb_fsm #(
     .m_DDMA(rd_DDMA_fsm),
 `endif
 `ifdef EN_NVME
+    .s_nvme_req(s_nvme_rd_sq),
     .m_nvme_rsp(m_nvme_rd_rsp),
 `endif
     .s_req(s_bpss_rd_sq),
@@ -296,7 +303,11 @@ tlb_fsm #(
 );
 
 `ifdef EN_NVME
+// NVMe: read FSM only
+metaIntf #(.STYPE(nvme_mmu_req_t)) wr_nvme_req ();
 metaIntf #(.STYPE(nvme_mmu_rsp_t)) wr_nvme_rsp ();
+assign wr_nvme_req.valid = 1'b0;
+assign wr_nvme_req.data = '0;
 assign wr_nvme_rsp.ready = 1'b1;
 `endif
 
@@ -318,6 +329,7 @@ tlb_fsm #(
     .m_DDMA(wr_DDMA_fsm),
 `endif
 `ifdef EN_NVME
+    .s_nvme_req(wr_nvme_req),
     .m_nvme_rsp(wr_nvme_rsp),
 `endif
     .s_req(s_bpss_wr_sq),

@@ -24,7 +24,6 @@
  * SOFTWARE.
  */
 
-
 `timescale 1ns/1ps
 
 import lynxTypes::*;
@@ -43,7 +42,7 @@ module nvme_sq_doorbell_writer (
 
     // Output: DMA write request (address + length)
     dmaIntf.m           m_dma_wr_req,
-    
+
     // Output: DMA write data (doorbell value)
     AXI4S.m             m_dma_wr_data
 );
@@ -81,7 +80,7 @@ module nvme_sq_doorbell_writer (
             // ST_IDLE: Wait for doorbell request
             ST_IDLE: begin
                 s_sq_db_req.ready = 1'b1;
-                
+
                 if (s_sq_db_req.valid) begin
                     db_req_N = s_sq_db_req.data;
                     state_N  = ST_SEND_DMA_REQ;

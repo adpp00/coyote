@@ -24,7 +24,6 @@
  * SOFTWARE.
  */
 
-
 `timescale 1ns/1ps
 
 import lynxTypes::*;
@@ -38,9 +37,9 @@ module nvme_req_parser (
     input  logic        aclk,
     input  logic        aresetn,
 
-    metaIntf.s          s_nvme_user_req,   // req_t (strm=STRM_NVME)
+    metaIntf.s          s_nvme_user_req,   // nvme_req_t
     metaIntf.m          m_nvme_info_req,   // nvme_info_req_t
-    metaIntf.m          m_nvme_cmd_parsed      // req_t (passthrough)
+    metaIntf.m          m_nvme_cmd_parsed      // nvme_req_t (passthrough)
 );
 
     typedef enum logic [1:0] {
@@ -50,7 +49,7 @@ module nvme_req_parser (
     } state_t;
 
     state_t  state_C, state_N;
-    req_t    cmd_C, cmd_N;
+    nvme_req_t cmd_C, cmd_N;
 
     // Temporaries
     nvme_info_req_t tbl_req;

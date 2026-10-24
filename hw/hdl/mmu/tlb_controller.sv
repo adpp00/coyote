@@ -105,6 +105,9 @@ logic [1:0][TLB_ORDER-1:0] addr_ext;
 logic [1:0][TAG_BITS-1:0] tag_ext;
 logic [1:0][PID_BITS-1:0] pid_ext;
 logic [1:0][STRM_BITS-1:0] strm_ext;
+`ifdef EN_NVME
+logic [1:0] nvme_ext;
+`endif
 logic [1:0] wr_ext;
 logic [1:0] val_ext;
 
@@ -346,6 +349,9 @@ always_ff @( posedge aclk ) begin : TLB_CLR
         addr_ext <= 'X;
         pid_ext <= 'X;
         strm_ext <= 'X;
+`ifdef EN_NVME
+        nvme_ext <= 'X;
+`endif
         wr_ext <= 'X;
         val_ext <= 0;
     end
@@ -371,6 +377,9 @@ always_ff @( posedge aclk ) begin : TLB_CLR
         tag_ext[0] <= TLB.addr[PG_BITS+TLB_ORDER+:TAG_BITS];
         pid_ext[0] <= TLB.pid;
         strm_ext[0] <= TLB.strm;
+`ifdef EN_NVME
+        nvme_ext[0] <= TLB.nvme;
+`endif
         wr_ext[0] <= TLB.wr;
         val_ext[0] <= TLB.valid;
 
@@ -378,6 +387,9 @@ always_ff @( posedge aclk ) begin : TLB_CLR
         tag_ext[1] <= tag_ext[0];
         pid_ext[1] <= pid_ext[0];
         strm_ext[1] <= strm_ext[0];
+`ifdef EN_NVME
+        nvme_ext[1] <= nvme_ext[0];
+`endif
         wr_ext[1] <= wr_ext[0];
         val_ext[1] <= val_ext[0];
     end
@@ -403,9 +415,9 @@ always_comb begin
 `ifdef EN_STRM
 `ifdef EN_MEM        
 `ifdef EN_NVME
-        ((strm_ext[1] == STRM_NVME) || (tlb_data_lup[i][TAG_BITS+PID_BITS+:STRM_BITS] == strm_ext[1])) &&
+        (nvme_ext[1] || (tlb_data_lup[i][TAG_BITS+PID_BITS+:STRM_BITS] == strm_ext[1])) && // strm hit
 `else
-        (tlb_data_lup[i][TAG_BITS+PID_BITS+:STRM_BITS] == strm_ext[1]) &&
+        (tlb_data_lup[i][TAG_BITS+PID_BITS+:STRM_BITS] == strm_ext[1]) && //TLB.strm) && // strm hit
 `endif
 `endif
 `endif

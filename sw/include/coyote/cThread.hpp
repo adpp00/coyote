@@ -435,7 +435,6 @@ protected:
 	 * @param nsid Namespace identifier for HOST-connected NVMe; PL currently requires 1
 	 * @param size Requested allocation size in bytes
 	 * @return Populated nvmeInitIoctl with result, dev_id, lba_size, lba_offset, lba_count, doorbell addresses and mdts
-	 * @throws std::runtime_error if the kernel ioctl fails
 	 */
 	nvmeInitIoctl initNVMe(const std::string& bdf, uint32_t nsid, uint64_t size);
 

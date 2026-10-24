@@ -86,12 +86,21 @@ proc cr_bd_design_ctrl { parentCell } {
     CONFIG.PROTOCOL {AXI4LITE} \
   ] $axi_cnfg
 
+  # NVMe P2P bursts
+  if {$cnfg(en_nvme_host) eq 1} {
+    set axi_main_burst 64
+    set axi_main_outs 16
+  } else {
+    set axi_main_burst 16
+    set axi_main_outs 8
+  }
+
   set axi_main [ create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:aximm_rtl:1.0 axi_main ]
   set_property -dict [list \
-    CONFIG.MAX_BURST_LENGTH {16} \
+    CONFIG.MAX_BURST_LENGTH $axi_main_burst \
     CONFIG.ID_WIDTH {6} \
-    CONFIG.NUM_WRITE_OUTSTANDING {8} \
-    CONFIG.NUM_READ_OUTSTANDING {8} \
+    CONFIG.NUM_WRITE_OUTSTANDING $axi_main_outs \
+    CONFIG.NUM_READ_OUTSTANDING $axi_main_outs \
     CONFIG.SUPPORTS_NARROW_BURST {0} \
     CONFIG.ADDR_WIDTH {64} \
     CONFIG.PROTOCOL {AXI4} \
@@ -147,6 +156,24 @@ proc cr_bd_design_ctrl { parentCell } {
     }
   }
 
+  # NVMe ports
+  if {$cnfg(en_nvme_host) eq 1} {
+    set axi_nvme_prp [create_bd_intf_port -mode Master -vlnv xilinx.com:interface:aximm_rtl:1.0 axi_nvme_prp]
+    set_property -dict [list CONFIG.ADDR_WIDTH {64} CONFIG.DATA_WIDTH {64} CONFIG.PROTOCOL {AXI4} \
+      CONFIG.HAS_BRESP {1} CONFIG.HAS_BURST {1} CONFIG.HAS_CACHE {1} CONFIG.HAS_LOCK {1} CONFIG.HAS_PROT {1} \
+      CONFIG.HAS_RRESP {1} CONFIG.HAS_WSTRB {1} CONFIG.NUM_READ_OUTSTANDING {8} CONFIG.NUM_WRITE_OUTSTANDING {8} ] $axi_nvme_prp
+
+    set axi_nvme_sq [create_bd_intf_port -mode Master -vlnv xilinx.com:interface:aximm_rtl:1.0 axi_nvme_sq]
+    set_property -dict [list CONFIG.ADDR_WIDTH {64} CONFIG.DATA_WIDTH {512} CONFIG.PROTOCOL {AXI4} \
+      CONFIG.HAS_BRESP {1} CONFIG.HAS_BURST {1} CONFIG.HAS_CACHE {1} CONFIG.HAS_LOCK {1} CONFIG.HAS_PROT {1} \
+      CONFIG.HAS_RRESP {1} CONFIG.HAS_WSTRB {1} CONFIG.NUM_READ_OUTSTANDING {8} CONFIG.NUM_WRITE_OUTSTANDING {8} ] $axi_nvme_sq
+
+    set axi_nvme_cq [create_bd_intf_port -mode Master -vlnv xilinx.com:interface:aximm_rtl:1.0 axi_nvme_cq]
+    set_property -dict [list CONFIG.ADDR_WIDTH {64} CONFIG.DATA_WIDTH {128} CONFIG.PROTOCOL {AXI4} \
+      CONFIG.HAS_BRESP {1} CONFIG.HAS_BURST {1} CONFIG.HAS_CACHE {1} CONFIG.HAS_LOCK {1} CONFIG.HAS_PROT {1} \
+      CONFIG.HAS_RRESP {1} CONFIG.HAS_WSTRB {1} CONFIG.NUM_READ_OUTSTANDING {8} CONFIG.NUM_WRITE_OUTSTANDING {8} ] $axi_nvme_cq
+  }
+
 ########################################################################################################
 # Create ports
 ########################################################################################################
@@ -185,6 +212,9 @@ proc cr_bd_design_ctrl { parentCell } {
                 for {set i 0}  {$i < $cnfg(n_reg)} {incr i} {
                     append cmd ":axim_ctrl_$i"
                 }
+            }
+            if {$cnfg(en_nvme_host) eq 1} {
+                append cmd ":axi_nvme_prp:axi_nvme_sq:axi_nvme_cq"
             }
             append cmd "} \
               CONFIG.ASSOCIATED_RESET {aresetn} \
@@ -225,6 +255,12 @@ proc cr_bd_design_ctrl { parentCell } {
     set ic0_mi [expr {2*$cnfg(n_reg) + 1}]
   } else {
     set ic0_mi [expr {$cnfg(n_reg) + 1}]
+  }
+
+  # NVMe masters
+  set nvme_mi_base $ic0_mi
+  if {$cnfg(en_nvme_host) eq 1} {
+    set ic0_mi [expr {$ic0_mi + 3}]
   }
 
   # Use a single clock when all enabled clock domains share the same frequency as sclk
@@ -291,6 +327,14 @@ proc cr_bd_design_ctrl { parentCell } {
       set j [expr {$i + 1}]
       set cmd [format "connect_bd_intf_net -intf_net axi_interconnect_0_M%02d_AXI \[get_bd_intf_ports axi_ctrl_%d] \[get_bd_intf_pins axi_interconnect_0/M%02d_AXI]" $j $i $j]
       eval $cmd 
+    }
+  }
+
+  if {$cnfg(en_nvme_host) eq 1} {
+    foreach {nvme_off nvme_port} [list 0 axi_nvme_prp 1 axi_nvme_sq 2 axi_nvme_cq] {
+      set j [expr {$nvme_mi_base + $nvme_off}]
+      set cmd [format "connect_bd_intf_net -intf_net axi_interconnect_0_M%02d_AXI \[get_bd_intf_pins axi_interconnect_0/M%02d_AXI] \[get_bd_intf_ports %s]" $j $j $nvme_port]
+      eval $cmd
     }
   }
 
@@ -361,6 +405,13 @@ proc cr_bd_design_ctrl { parentCell } {
       set cmd [format "create_bd_addr_seg -range 0x00040000 -offset 0x000%02x0000 \[get_bd_addr_spaces /axi_main] \[get_bd_addr_segs axi_ctrl_$i/Reg] SEG_axi_ctrl_$i\_Reg" [expr {0x10 + $i * 4}]]
       eval $cmd
     }
+  }
+
+  # NVMe address segments
+  if {$cnfg(en_nvme_host) eq 1} {
+    create_bd_addr_seg -range 0x00040000 -offset 0x04040000 [get_bd_addr_spaces /axi_main] [get_bd_addr_segs axi_nvme_sq/Reg]   SEG_axi_nvme_sq_Reg
+    create_bd_addr_seg -range 0x00010000 -offset 0x04020000 [get_bd_addr_spaces /axi_main] [get_bd_addr_segs axi_nvme_cq/Reg]   SEG_axi_nvme_cq_Reg
+    create_bd_addr_seg -range 0x01000000 -offset 0x05000000 [get_bd_addr_spaces /axi_main] [get_bd_addr_segs axi_nvme_prp/Reg]  SEG_axi_nvme_prp_Reg
   }
 
   if {$cnfg(en_pr) eq 0} {

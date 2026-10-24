@@ -45,6 +45,7 @@ logic [63:0]              bench_lba;
 logic [15:0]              bench_dev_mask;
 logic [63:0]              bench_nsid;
 logic [31:0]              bench_max_outstanding;
+logic [PID_BITS-1:0]      bench_pid;
 
 logic [31:0]              bench_sent;
 logic [31:0]              bench_done;
@@ -63,6 +64,7 @@ perf_nvme_axi_ctrl_parser inst_axi_ctrl_parser (
     .bench_dev_mask(bench_dev_mask),
     .bench_nsid(bench_nsid),
     .bench_max_outstanding(bench_max_outstanding),
+    .bench_pid(bench_pid),
     .bench_sent(bench_sent),
     .bench_done(bench_done),
     .bench_timer(bench_timer),
@@ -93,6 +95,7 @@ logic [31:0]                latch_max_outstanding;
 logic                       latch_wr;
 logic [BENCH_MAX_DEVS-1:0]  latch_dev_mask;
 logic [NSID_BITS-1:0]       latch_nsid;
+logic [PID_BITS-1:0]        latch_pid;
 
 always_ff @(posedge aclk) begin
     if (!aresetn) begin
@@ -104,6 +107,7 @@ always_ff @(posedge aclk) begin
         latch_wr              <= 1'b0;
         latch_dev_mask        <= '0;
         latch_nsid            <= '0;
+        latch_pid             <= '0;
     end
     else if (go_pulse) begin
         latch_vaddr           <= bench_vaddr;
@@ -114,6 +118,7 @@ always_ff @(posedge aclk) begin
         latch_wr              <= bench_ctrl[1];
         latch_dev_mask        <= bench_dev_mask[BENCH_MAX_DEVS-1:0];
         latch_nsid            <= bench_nsid[NSID_BITS-1:0];
+        latch_pid             <= bench_pid;
     end
 end
 
@@ -136,7 +141,7 @@ logic [63:0]             dev_timer    [BENCH_MAX_DEVS];
 
 // Per-device request to the round-robin arbiter
 logic                    dev_req_valid [BENCH_MAX_DEVS];
-req_t                    dev_req       [BENCH_MAX_DEVS];
+nvme_req_t               dev_req       [BENCH_MAX_DEVS];
 logic                    dev_req_grant [BENCH_MAX_DEVS];
 
 generate
@@ -145,6 +150,11 @@ for (genvar d = 0; d < BENCH_MAX_DEVS; d++) begin : gen_dev
     wire req_accepted = dev_req_valid[d] && dev_req_grant[d];
     wire cpl_for_me   = s_nvme_cpl.valid && s_nvme_cpl.ready &&
                         (s_nvme_cpl.data.dev_id[DEV_BITS-1:0] == d[DEV_BITS-1:0]);
+    // Rejected (local error)
+    wire rej_for_me   = s_nvme_cq_rsp.valid && s_nvme_cq_rsp.ready &&
+                        (s_nvme_cq_rsp.data[NVME_RSP_ERROR_BITS-1:0] != 0) &&
+                        (s_nvme_cq_rsp.data[12+:DEV_BITS] == d[DEV_BITS-1:0]);
+    wire [1:0] fin_cnt = 2'(cpl_for_me) + 2'(rej_for_me);
 
     always_ff @(posedge aclk) begin
         if (!aresetn) begin
@@ -182,22 +192,15 @@ for (genvar d = 0; d < BENCH_MAX_DEVS; d++) begin : gen_dev
                     DEV_RUN: begin
                         dev_timer[d] <= dev_timer[d] + 1;
 
-                        // Inflight counter: +1 on issue, -1 on completion
-                        if (req_accepted && !cpl_for_me) begin
-                            dev_inflight[d] <= dev_inflight[d] + 1;
-                        end
-                        else if (!req_accepted && cpl_for_me) begin
-                            dev_inflight[d] <= dev_inflight[d] - 1;
-                        end
+                        // Inflight counter: +1 on issue, -1 on completion or rejection
+                        dev_inflight[d] <= dev_inflight[d] + 32'(req_accepted) - 32'(fin_cnt);
 
                         // Issue next command while below the outstanding cap
                         if (!dev_req_valid[d] &&
                             dev_sent[d] < latch_n_reps &&
                             dev_inflight[d] < latch_max_outstanding) begin
                             dev_req[d]           <= '0;
-                            dev_req[d].strm      <= STRM_NVME;
-                            dev_req[d].vfid      <= '0;
-                            dev_req[d].last      <= 1'b1;
+                            dev_req[d].pid       <= latch_pid;
                             dev_req[d].vaddr     <= dev_vaddr[d];
                             dev_req[d].len       <= latch_chunk_size;
                             dev_req[d].naddr     <= dev_offset[d];
@@ -214,10 +217,8 @@ for (genvar d = 0; d < BENCH_MAX_DEVS; d++) begin : gen_dev
                             dev_offset[d] <= dev_offset[d] + latch_chunk_size;
                         end
 
-                        // Count completions targeting this device
-                        if (cpl_for_me) begin
-                            dev_done[d] <= dev_done[d] + 1;
-                        end
+                        // Count completions and rejections targeting this device
+                        dev_done[d] <= dev_done[d] + 32'(fin_cnt);
 
                         // All commands accounted for; freeze the timer
                         if (dev_done[d] >= latch_n_reps && dev_inflight[d] == 0) begin

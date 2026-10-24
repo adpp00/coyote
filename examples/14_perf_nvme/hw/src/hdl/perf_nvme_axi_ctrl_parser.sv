@@ -55,6 +55,7 @@ import lynxTypes::*;
  * @param[out] bench_dev_mask Per-device participation mask
  * @param[out] bench_nsid NVMe namespace identifier
  * @param[out] bench_max_outstanding Maximum in-flight commands per device
+ * @param[out] bench_pid Coyote thread ID (ctid) that owns the buffer
  * @param[in] bench_sent Total commands issued so far
  * @param[in] bench_done Total completions received so far
  * @param[in] bench_timer Clock cycles since go pulse
@@ -75,6 +76,7 @@ module perf_nvme_axi_ctrl_parser (
     output logic [15:0]                 bench_dev_mask,
     output logic [63:0]                 bench_nsid,
     output logic [31:0]                 bench_max_outstanding,
+    output logic [PID_BITS-1:0]         bench_pid,
 
     // Inputs from the benchmark engine (software-readable)
     input  logic [31:0]                 bench_sent,
@@ -86,7 +88,7 @@ module perf_nvme_axi_ctrl_parser (
 /////////////////////////////////////
 //          CONSTANTS             //
 ///////////////////////////////////
-localparam integer N_REGS = 12;
+localparam integer N_REGS = 13;
 localparam integer ADDR_MSB = $clog2(N_REGS);
 localparam integer ADDR_LSB = $clog2(AXIL_DATA_BITS/8);
 localparam integer AXI_ADDR_BITS = ADDR_LSB + ADDR_MSB;
@@ -125,6 +127,7 @@ localparam integer BENCH_DEV_MASK_REG        = 8;
 localparam integer BENCH_NSID_REG            = 9;
 localparam integer BENCH_MAX_OUTSTANDING_REG = 10;
 localparam integer BENCH_ERROR_REG           = 11;
+localparam integer BENCH_PID_REG             = 12;
 
 /////////////////////////////////////
 //         WRITE PROCESS          //
@@ -148,7 +151,8 @@ always_ff @(posedge aclk) begin
                 BENCH_LBA_REG,
                 BENCH_DEV_MASK_REG,
                 BENCH_NSID_REG,
-                BENCH_MAX_OUTSTANDING_REG: begin
+                BENCH_MAX_OUTSTANDING_REG,
+                BENCH_PID_REG: begin
                     for (int i = 0; i < (AXIL_DATA_BITS/8); i++) begin
                         if (axi_ctrl.wstrb[i])
                             ctrl_reg[axi_awaddr[ADDR_LSB+:ADDR_MSB]][(i*8)+:8] <= axi_ctrl.wdata[(i*8)+:8];
@@ -200,6 +204,7 @@ always_comb begin
     bench_dev_mask        = ctrl_reg[BENCH_DEV_MASK_REG][15:0];
     bench_nsid            = ctrl_reg[BENCH_NSID_REG];
     bench_max_outstanding = ctrl_reg[BENCH_MAX_OUTSTANDING_REG][31:0];
+    bench_pid             = ctrl_reg[BENCH_PID_REG][PID_BITS-1:0];
 end
 
 /////////////////////////////////////
