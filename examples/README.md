@@ -13,7 +13,7 @@ Welcome to Coyote - the open-source FPGA shell! Coyote provides typical OS abstr
 [Per-device example overview](#per-device-example-overview)
 
 ## Examples overview
-Coyote currently includes ten examples, covering the following concepts:
+Coyote currently includes the following examples:
 - **Example 1: Hello World!:** How to synthesize the Coyote hardware, as well as the various configurations and flags. On the software side, concepts such as data movement and *Coyote threads* are covered, which enable easy integration from a high-level language (C++) with the FPGA.
 - **Example 2: HLS vector addition:** How to deploy high-level synthesis (HLS) kernels with Coyote and enable multiple data streams at once.
 - **Example 3: Multiple, parallel AES encryption blocks:** How to set control registers on the FPGA from C++ and deploy multiple, parallel and indendent applications (vFPGAs) on hardware.
@@ -25,6 +25,7 @@ Coyote currently includes ten examples, covering the following concepts:
 - **Example 9: Using the FPGA as a SmartNIC for Remote Direct Memory Access:** How to do networking with Coyote's internal, 100G, fully RoCEv2-compliant networking stack.
 - **Example 10: Application reconfiguration and background services [ADVANCED]:** How to dynamically load Coyote applications to a system-wide service, which automatically schedules tasks and reconfigures the FPGA with the corrects bitstream, based on client requests. 
 - **Example 11: Packet sniffer [ADVANCED]:** Shows a custom-built Coyote service and user application which can capture all incoming traffic in real-time, filter it based on header rules and export it to a .pcap file for analysis with Wireshark.
+- **Example 14: NVMe SSD bandwidth test:** How to read and write NVMe SSDs directly from a vFPGA, with SSDs attached to the host (U55C/U280) or to the FPGA's own PCIe root complex (V80), using host memory or HBM as the buffer.
 
 ## Building the examples
 #### Hardware synthesis
@@ -153,7 +154,7 @@ COYOTE_SIM_DIR=../../hw/build_sim/ ./test
 If you need verbose output for debugging purposes, put a `#define VERBOSE` into `sim/sw/include/Common.hpp`. More details on simulation can be found in the corresponding README, `Coyote/sim/README.md`
 
 ## Per-device example overview
-The following table shows the status of each example on Coyote-supported platforms as well as in the simulation environment. Networking is not yet supported on the V80, but will be added soon. The simulation environment doesn't support networking or reconfiguration simulation, nor does it support simulation of multiple vFPGAs.
+The following table shows the status of each example on Coyote-supported platforms as well as in the simulation environment. Networking is not yet supported on the V80, but will be added soon. The simulation environment doesn't support networking or reconfiguration simulation, nor does it support simulation of multiple vFPGAs. ❔ marks combinations that the build flow supports but that have not been tested on hardware.
 
 | Example                  	| v80 	| u55c 	| u280 	| u250 	| Simulation 	|
 |--------------------------	|:---:	|:----:	|:----:	|:----:	|------------	|
@@ -168,3 +169,4 @@ The following table shows the status of each example on Coyote-supported platfor
 | 9 RDMA                   	|  ❌  	|   ✅  	|   ✅  	|   ✅  	| ❌          	|
 | 10 vFPGA reconfiguration 	|  ✅  	|   ✅  	|   ✅  	|   ✅  	| ❌          	|
 | 11 Traffic sniffer       	|  ❌  	|   ✅  	|   ✅  	|   ✅  	| ❌          	|
+| 14 NVMe SSD              	|  ✅  	|   ✅  	|   ❔  	|   ❔  	| ❌          	|
