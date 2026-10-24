@@ -312,30 +312,4 @@ module nvme_sq_ctrl #(
         sq_entry_wire[32*15+31:32*15+0] = 32'h0;
     end
 
-    // ILA Debug
-// `define EN_ILA_NVME_SQ_CTRL
-`ifdef EN_ILA_NVME_SQ_CTRL
-    ila_nvme_sq_ctrl inst_ila_nvme_sq_ctrl (
-        .clk    (aclk),
-        // -- Ingress (FPGA writes SQE to BRAM) --
-        .probe0 (s_sqe.valid),                          // 1
-        .probe1 (s_sqe.ready),                          // 1
-        .probe2 (s_sqe.data.dev_id),                    // N_NVME_BITS (4)
-        .probe3 (s_sqe.data.entry),                     // N_NVME_BITS+NVME_QUEUE_BITS (10)
-        .probe4 (bram_en_a),                            // 1
-        .probe5 (a_addr),                               // ADDR_BITS (10)
-        .probe6 (a_en),                                 // 1
-        .probe7 (b_addr),                               // ADDR_BITS (10)
-        .probe8 (b_addr_q),                             // ADDR_BITS (10)
-        // -- Egress: SQE fields SSD reads --
-        .probe9 (sq_entry_wire[31:0]),                  // 32  DW0: {CID[31:16], 8'h0, opcode[7:0]}
-        .probe10(sq_entry_wire[63:32]),                 // 32  DW1: NSID
-        .probe11(sq_entry_wire[32*6+31:32*6]),          // 32  DW6: PRP1[31:0]
-        .probe12(sq_entry_wire[32*7+31:32*7]),          // 32  DW7: PRP1[63:32]
-        .probe13(sq_entry_wire[32*10+31:32*10]),        // 32  DW10: SLBA[31:0]
-        .probe14(sq_entry_wire[32*11+31:32*11]),        // 32  DW11: SLBA[63:32]
-        .probe15(sq_entry_wire[32*12+31:32*12])         // 32  DW12: {16'h0, NLBA[15:0]}
-    );
-`endif
-
 endmodule

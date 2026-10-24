@@ -364,34 +364,4 @@ module nvme_cnfg_slave (
         end
     end
 
-    // ILA Debug
-// `define EN_ILA_NVME_CNFG_SLAVE
-`ifdef EN_ILA_NVME_CNFG_SLAVE
-    ila_nvme_cnfg_slave inst_ila_nvme_cnfg_slave (
-        .clk    (aclk),
-        // AXI write channel
-        .probe0 (s_nvme_cnfg.awvalid),                  // 1
-        .probe1 (s_nvme_cnfg.awready),                  // 1
-        .probe2 (s_nvme_cnfg.awaddr),                   // AXIL_ADDR_BITS
-        .probe3 (s_nvme_cnfg.wvalid),                   // 1
-        .probe4 (s_nvme_cnfg.wready),                   // 1
-        .probe5 (s_nvme_cnfg.wdata[31:0]),              // 32
-        // AXI read channel
-        .probe6 (s_nvme_cnfg.arvalid),                  // 1
-        .probe7 (s_nvme_cnfg.arready),                  // 1
-        // m_update_tbl
-        .probe8 (m_update_tbl.valid),                   // 1
-        .probe9 (m_update_tbl.ready),                   // 1
-        .probe10(m_update_tbl.data.dev_id),             // N_NVME_BITS (4)
-        // m_perm_update
-        .probe11(m_perm_update.valid),                  // 1
-        .probe12(m_perm_update.ready),                  // 1
-        .probe13(m_perm_update.data.region_id),         // REGION_ID_BITS
-        .probe14(m_perm_update.data.dev_id),            // N_NVME_BITS (4)
-        // Internal
-        .probe15(ctrl_reg_wren),                        // 1
-        .probe16(fpga_bar_base)                         // 64
-    );
-`endif
-
 endmodule

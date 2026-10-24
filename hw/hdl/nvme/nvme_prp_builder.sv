@@ -465,28 +465,4 @@ module nvme_prp_builder #(
         end
     end
 
-    // ILA Debug
-// `define EN_ILA_NVME_MANAGE_PRP
-`ifdef EN_ILA_NVME_MANAGE_PRP
-    ila_nvme_manage_prp inst_ila_nvme_manage_prp (
-        .clk    (aclk),
-        .probe0 (s_nvme_prp_req.valid),                 // 1
-        .probe1 (s_nvme_prp_req.ready),                 // 1
-        .probe2 (m_nvme_prp_rsp.valid),                 // 1
-        .probe3 (m_nvme_prp_rsp.ready),                 // 1
-        .probe4 (m_nvme_prp_rsp.data.prp1),             // 64
-        .probe5 (m_nvme_prp_rsp.data.prp2),             // 64
-        .probe6 (m_nvme_mmu_req.valid),                 // 1
-        .probe7 (m_nvme_mmu_req.ready),                 // 1
-        .probe8 (s_nvme_mmu_rsp.valid),                 // 1
-        .probe9 (s_nvme_mmu_rsp.ready),                 // 1
-        .probe10(48'(s_nvme_mmu_rsp.data.paddr)),       // Existing 48-bit ILA address probe
-        .probe11(s_nvme_mmu_rsp.data.fault),            // 1
-        .probe12(m_nvme_prp_write_req.valid),           // 1
-        .probe13(m_nvme_prp_write_req.ready),           // 1
-        .probe14(state_C),                              // 4
-        .probe15(FPGA_BAR_BASE)                         // 64
-    );
-`endif
-
 endmodule

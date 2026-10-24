@@ -233,28 +233,4 @@ module nvme_cq_head_tracker #(
         end
     end
 
-    // ILA Debug
-// `define EN_ILA_NVME_CQ_HEAD_TRACKER
-`ifdef EN_ILA_NVME_CQ_HEAD_TRACKER
-    ila_nvme_cq_head_tracker inst_ila_nvme_cq_head_tracker (
-        .clk    (aclk),
-        .probe0 (cqe_valid),                            // 1
-        .probe1 (cqe_dev_id),                           // N_NVME_BITS (4)
-        .probe2 (state_C),                              // 3
-        .probe3 (scan_dev_C),                           // N_NVME_BITS (4)
-        .probe4 (m_cq_head_update.valid),               // 1
-        .probe5 (m_cq_head_update.ready),               // 1
-        .probe6 (m_cq_head_update.data.dev_id),         // N_NVME_BITS (4)
-        .probe7 (m_cq_head_update.data.cq_head),        // NVME_QUEUE_BITS (6)
-        .probe8 (m_cq_dma_req.valid),                   // 1
-        .probe9 (m_cq_dma_req.ready),                   // 1
-        .probe10(m_cq_dma_req.req.paddr),               // ADDR_BITS (48)
-        .probe11(m_cq_dma_data.tvalid),                 // 1
-        .probe12(m_cq_dma_data.tready),                 // 1
-        .probe13(pending_count),                        // NVME_QUEUE_BITS+1 (7)
-        .probe14(should_send_dma),                      // 1
-        .probe15(cq_doorbell_addr)                      // 64
-    );
-`endif
-
 endmodule

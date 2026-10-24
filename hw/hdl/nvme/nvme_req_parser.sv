@@ -123,21 +123,4 @@ module nvme_req_parser (
         end
     end
 
-    // ILA Debug
-// `define EN_ILA_NVME_S0
-`ifdef EN_ILA_NVME_S0
-    ila_nvme_s0 inst_ila_nvme_s0 (
-        .clk    (aclk),
-        .probe0 (s_nvme_user_req.valid),                // 1
-        .probe1 (s_nvme_user_req.ready),                // 1
-        .probe2 (m_nvme_info_req.valid),                // 1
-        .probe3 (m_nvme_info_req.ready),                // 1
-        .probe4 (m_nvme_info_req.data.dev_id),          // N_NVME_BITS (4)
-        .probe5 (m_nvme_info_req.data.region_id),       // REGION_ID_BITS
-        .probe6 (m_nvme_cmd_parsed.valid),                  // 1
-        .probe7 (m_nvme_cmd_parsed.ready),                  // 1
-        .probe8 (state_C)                               // 2
-    );
-`endif
-
 endmodule

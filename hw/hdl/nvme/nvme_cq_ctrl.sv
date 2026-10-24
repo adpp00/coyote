@@ -367,38 +367,4 @@ module nvme_cq_ctrl #(
         endcase
     end
 
-    // ILA Debug
-// `define EN_ILA_NVME_CQ_CTRL
-`ifdef EN_ILA_NVME_CQ_CTRL
-    // Wire for probing current device's cq_head
-    logic [CQ_ADDR_BITS-1:0] dbg_cq_head_cur;
-    assign dbg_cq_head_cur = cq_head_r[poll_dev_r];
-
-    // Wire for probing current device's valid bits (first 8 bits)
-    logic [7:0] dbg_cqe_valid_bits_cur;
-    assign dbg_cqe_valid_bits_cur = cqe_valid_bits[poll_dev_r][7:0];
-
-    ila_nvme_cq_ctrl inst_ila_nvme_cq_ctrl (
-        .clk    (aclk),
-        .probe0 (cqe_wr_detect),                        // 1
-        .probe1 (wr_dev_id),                            // N_NVME_BITS (4)
-        .probe2 (wr_cid),                               // full SSD CID (16)
-        .probe3 (m_cqe.valid),                          // 1
-        .probe4 (m_cqe.ready),                          // 1
-        .probe5 (m_cqe.data.dev_id),                    // N_NVME_BITS (4)
-        .probe6 (m_cqe.data.status),                    // 15
-        .probe7 (m_cqe.data.phase),                     // 1
-        .probe8 (state_r),                              // 3
-        .probe9 (poll_dev_r),                           // N_NVME_BITS (4)
-        .probe10(dbg_cq_head_cur),                      // CQ_ADDR_BITS (6)
-        .probe11(dbg_cqe_valid_bits_cur),               // 8
-        .probe12(b_data_out),                           // DW3:DW2 (64)
-        .probe13(cqe_word_r),                           // DW3:DW2 (64)
-        .probe14(wr_slot),                              // physical CQ slot (6)
-        .probe15(cqe_word_r[47:32]),                    // retired full CID (16)
-        .probe16(m_sq_head),                            // SQHD (16)
-        .probe17(exp_phase_r[poll_dev_r])               // expected CQ phase (1)
-    );
-`endif
-
 endmodule
