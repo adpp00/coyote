@@ -20,7 +20,6 @@
  */
 
 #include "pci_xdma.h"
-#include "coyote_nvme.h"
 
 static uint32_t current_device = 0;
 
@@ -516,6 +515,7 @@ err_card_alloc:
     remove_sysfs_entry(bd_data);
 err_sysfs:
 err_read_shell_cnfg:
+    free_nvme_resources(bd_data);
 end:
     dbg_info("shell load returning %d\n", ret_val);
     return ret_val;
@@ -544,15 +544,8 @@ void shell_pci_remove(struct bus_driver_data *bd_data) {
     free_card_resources(bd_data);
     dbg_info("card memory resources released\n");
 
-    // Release NVMe manager
-    if (bd_data->en_nvme) {
-        nvme_mgr_free(bd_data);
-        if (bd_data->nvme_cnfg_regs) {
-            iounmap((void *) bd_data->nvme_cnfg_regs);
-            bd_data->nvme_cnfg_regs = NULL;
-        }
-        dbg_info("NVMe manager released\n");
-    }
+    // Release NVMe manager and config registers
+    free_nvme_resources(bd_data);
 
     // Remove sysfs entry
     remove_sysfs_entry(bd_data);
@@ -749,6 +742,7 @@ err_card_alloc:
     remove_sysfs_entry(bd_data);
 err_sysfs:
 err_read_shell_cnfg:
+    free_nvme_resources(bd_data);
     remove_engines(bd_data);
 err_engines:
 err_mask:
@@ -800,6 +794,9 @@ void pci_remove(struct pci_dev *pdev) {
     // Deallocate card resources
     free_card_resources(bd_data);
     dbg_info("card memory resources released\n");
+
+    // Release NVMe manager and config registers
+    free_nvme_resources(bd_data);
 
     // Remove sysfs entry
     remove_sysfs_entry(bd_data);

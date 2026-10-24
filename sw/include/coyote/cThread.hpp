@@ -29,7 +29,6 @@
 
 #include <thread>
 #include <chrono>
-#include <cstring>
 #include <string>
 #include <random>
 #include <fstream>
@@ -431,28 +430,39 @@ protected:
 	 * range is then accessible from this cThread's region via NVMe SQEs issued by the
 	 * vFPGA user logic.
 	 *
+	 * Requires CAP_SYS_ADMIN. Each region can hold one range per device; call closeNVMe before
+	 * claiming a new range on the same device.
+	 *
 	 * @param bdf  PCI BDF string for HOST-connected NVMe; ignored for PL-connected NVMe
 	 * @param nsid Namespace identifier for HOST-connected NVMe; PL currently requires 1
 	 * @param size Requested allocation size in bytes
 	 * @return Populated nvmeInitIoctl with result, dev_id, lba_size, lba_offset, lba_count, doorbell addresses and mdts
-	 * @throws std::runtime_error if the kernel ioctl fails
+	 * @throws std::runtime_error if the kernel ioctl fails; the message includes the cause (e.g., EPERM, EBUSY, ENOSPC)
 	 */
 	nvmeInitIoctl initNVMe(const std::string& bdf, uint32_t nsid, uint64_t size);
 
 	/**
 	 * @brief Release the LBA range previously claimed by initNVMe for this region
+	 *
+	 * Revokes the region's FPGA permission for the device and frees the range for later initNVMe calls.
+	 * The driver does the same for any remaining ranges when the last handle to the vFPGA is closed.
+	 * Requires CAP_SYS_ADMIN.
+	 *
 	 * @param dev_id FPGA dev_id returned by initNVMe
+	 * @throws std::runtime_error if the kernel ioctl fails
 	 */
 	void closeNVMe(uint32_t dev_id);
 
 	/**
-	 * @brief Test whether an NVMe device matching (bdf, nsid) is already registered to this region
+	 * @brief Test whether an NVMe device matching (bdf, nsid) is registered to this region
 	 *
-	 * Populates the output fields of the returned nvmeInitIoctl when result == 0.
+	 * Non-throwing query: populates the output fields of the returned nvmeInitIoctl
+	 * (including this region's lba_offset and lba_count) when result == 0.
 	 *
-	 * @param bdf  PCI BDF string of the NVMe device
+	 * @param bdf  PCI BDF string for HOST-connected NVMe; ignored for PL-connected NVMe, where only nsid is matched
 	 * @param nsid Namespace identifier
-	 * @return Populated nvmeInitIoctl with result == 0 when registered, negative errno otherwise
+	 * @return Populated nvmeInitIoctl with result == 0 when registered, result == -ENOENT otherwise
+	 * @throws std::runtime_error only if the kernel ioctl itself fails (e.g., NVMe not enabled in the shell)
 	 */
 	nvmeInitIoctl isNVMeRegistered(const std::string& bdf, uint32_t nsid);
 

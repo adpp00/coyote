@@ -25,9 +25,9 @@
  *
  * Host-connected devices use per-device PCI discovery, controller
  * initialization, admin/I/O queue setup, and per-region LBA permission
- * management. PL-connected devices retain the same public ABI and permission
- * model, but their controller lifecycle belongs to design_plnvme. The driver
- * reads the BD-discovered namespace parameters through the FPGA config window.
+ * management. PL-connected devices use the same ioctls and permission model;
+ * their controller is managed by design_plnvme, and the driver reads the
+ * namespace parameters discovered by the BD through the FPGA config window.
  *
  * All entry points are only meaningful when EN_NVME is set in the loaded bitstream;
  * callers must check bd_data->en_nvme before invoking.
@@ -47,10 +47,15 @@ void nvme_mgr_free(struct bus_driver_data *bd_data);
 /// Initialize NVMe access for a region; HOST uses BDF discovery, while PL consumes the block-design discovery registers
 long vfpga_nvme_init(struct vfpga_dev *device, struct nvme_init_ioctl *req);
 
-/// Release the LBA range previously allocated to this region; tears down the device if no regions remain
+/// Revoke this region's FPGA permission for dev_id (all devices if dev_id >= MAX_NVME_DEVICES) and free its LBA range;
+/// the controller stays claimed until driver teardown
 long vfpga_nvme_close(struct vfpga_dev *device, uint32_t dev_id);
 
-/// Test whether an NVMe device matching *req is already registered to this region; populates the output fields when found
+/// Test whether an NVMe device matching *req is registered to this region; populates the output fields when found,
+/// otherwise returns 0 with req->result = -ENOENT
 long vfpga_nvme_is_registered(struct vfpga_dev *device, struct nvme_init_ioctl *req);
+
+/// Same cleanup as vfpga_nvme_close for every device; called when the last handle to the vFPGA device is released
+void vfpga_nvme_release_region(struct vfpga_dev *device);
 
 #endif // _COYOTE_NVME_H_

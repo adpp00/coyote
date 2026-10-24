@@ -516,6 +516,18 @@ void cThread::closeConn() {
     ASSERT("Networking not implemented in simulation target")
 }
 
+nvmeInitIoctl cThread::initNVMe(const std::string& bdf, uint32_t nsid, uint64_t size) {
+    throw std::runtime_error("NVMe not supported in simulation");
+}
+
+void cThread::closeNVMe(uint32_t dev_id) {
+    throw std::runtime_error("NVMe not supported in simulation");
+}
+
+nvmeInitIoctl cThread::isNVMeRegistered(const std::string& bdf, uint32_t nsid) {
+    throw std::runtime_error("NVMe not supported in simulation");
+}
+
 void cThread::lock() {
     ASSERT("Scheduling not implemented in simulation target")
 }

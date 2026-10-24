@@ -103,10 +103,10 @@ namespace coyote {
 // Claim an NVMe SSD, set up admin/I/O queues and allocate an LBA range for this region
 #define IOCTL_NVME_INIT                     _IOWR('F', 20, unsigned long)
 
-// Release the LBA range previously allocated to this region
+// Revoke this region's FPGA permission for an NVMe device and release its LBA range
 #define IOCTL_NVME_CLOSE                    _IOW('F', 21, unsigned long)
 
-// Test whether an NVMe device matching the given identifier is already registered to this region
+// Test whether an NVMe device matching the given identifier is registered to this region; result is -ENOENT if not
 #define IOCTL_NVME_IS_REGISTERED            _IOWR('F', 22, unsigned long)
 
 // Allocate memory for partial reconfiguration
@@ -296,19 +296,19 @@ constexpr unsigned long const STRM_CARD = 0;
 constexpr unsigned long const STRM_HOST = 1;
 constexpr unsigned long const STRM_RDMA = 2;
 constexpr unsigned long const STRM_TCP = 3;
-constexpr unsigned long const STRM_NVME = 4;
 
 // Maximum number of NVMe SSDs that can be claimed by the FPGA; matches the driver-side MAX_NVME_DEVICES
 constexpr int const MAX_NVME_DEVICES = 16;
 
 // NVMe initialization IOCTL request/response; mirror of struct nvme_init_ioctl in coyote_defs.h.
 // Passed to IOCTL_NVME_INIT / IOCTL_NVME_IS_REGISTERED. Caller fills in the input fields; the
-// driver populates the output fields when result == 0.
+// driver populates the output fields when result == 0. IOCTL_NVME_IS_REGISTERED sets result to
+// -ENOENT (and still succeeds) if the device is not registered to the calling region.
 struct nvmeInitIoctl {
     // Input
     char     bdf[16];                       /**< PCI BDF for HOST; ignored for PL-connected NVMe */
     uint32_t nsid;                          /**< Namespace for HOST; PL currently requires namespace 1 */
-    uint64_t size;                          /**< Requested allocation size, bytes */
+    uint64_t size;                          /**< Requested allocation size, bytes; IOCTL_NVME_INIT only */
 
     // Output
     int32_t  result;                        /**< 0 on success, negative errno otherwise */
@@ -320,6 +320,7 @@ struct nvmeInitIoctl {
     uint64_t sq_doorbell_addr;
     uint64_t cq_doorbell_addr;
     uint32_t mdts;                          /**< Maximum data transfer size, bytes */
+    uint32_t queue_depth;                   /**< I/O queue entries (NVME_QUEUE_DEPTH); at most queue_depth - 1 commands are queued per device */
 } __attribute__((packed));
 
 // Default port for remote connections

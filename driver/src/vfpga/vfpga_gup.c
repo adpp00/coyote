@@ -99,6 +99,10 @@ int mmu_handler_gup(struct vfpga_dev *device, uint64_t vaddr, uint64_t len, int3
                 dbg_info("card access, map present, updating TLB\n");
                 tlb_map_gup(device, &pf_desc, user_pg, hpid);
             }
+        } else if(stream == NVME_ACCESS) {
+            // The SSD may still be transferring other pages of this buffer, so never migrate it
+            dbg_info("nvme access, map present, updating TLB\n");
+            tlb_map_gup(device, &pf_desc, user_pg, hpid);
         } else {
             ret_val = -EINVAL;
             pr_err("access not supported, vFPGA %d\n", device->id);

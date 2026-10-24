@@ -39,6 +39,9 @@
  */
 int read_shell_config(struct bus_driver_data *data);
 
+/// Releases the NVMe manager and NVMe config register mapping set up by read_shell_config; no-op if there are none
+void free_nvme_resources(struct bus_driver_data *data);
+
 /// Allocates and initializes metadata structs used for managing card memory, if enabled 
 int allocate_card_resources(struct bus_driver_data *data);
 
