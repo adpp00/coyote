@@ -26,18 +26,29 @@
 
 `timescale 1ns / 1ps
 
+`include "axi_macros.svh"
+
 import lynxTypes::*;
 
 /**
  * @brief   NVMe doorbell DMA arbiter
  *
- * Merges the SQ and CQ doorbell DMA streams onto a single DMA write channel.
+ * Merges two DMA write streams (host DMA and NVMe doorbells, or SQ and CQ doorbells)
+ * onto a single DMA write channel.
+ *
+ * Requests are forwarded round-robin as soon as they arrive. As in mmu_arbiter and
+ * axis_mux_host_sink, the data follows in request order: each request carries
+ * ceil(len / beat size) beats, and tlast marks only the end of a transfer, so one
+ * transfer can span several requests (e.g. an RDMA message split by the MMU).
+ *
+ * Completions (rsp.done) arrive for requests with req.last set, in request order, so the
+ * port of each such request is queued and every completion is returned to that port.
  */
 module nvme_doorbell_arb (
     input  logic        aclk,
     input  logic        aresetn,
 
-    // Port 0: Host DMA (higher priority in tie)
+    // Port 0: Host DMA
     dmaIntf.s           s_dma_req_0,
     AXI4S.s             s_axis_0,
 
@@ -50,169 +61,99 @@ module nvme_doorbell_arb (
     AXI4S.m             m_axis
 );
 
-    // State machine
+    localparam integer SEQ_DEPTH = 2 * N_OUTSTANDING;
+    localparam integer CPL_DEPTH = 64;
 
-    typedef enum logic [2:0] {
-        ST_IDLE,
-        ST_GRANT_0_REQ,
-        ST_GRANT_0_DATA,
-        ST_GRANT_1_REQ,
-        ST_GRANT_1_DATA
-    } state_t;
+    // Data order and completion order, one entry per forwarded request
+    metaIntf #(.STYPE(mux_host_t)) seq_in (.*), seq_out (.*);
+    logic cpl_in_ready, cpl_out_valid, cpl_out_port;
 
-    state_t state_C, state_N;
+    // Port of the forwarded request; held while the output waits, so the request stays stable
+    logic sel, sel_C, hold_C, rr_C;
+    logic fire;
 
-    // Last grant for round-robin (0 = port 0 was last, 1 = port 1 was last)
-    logic last_grant_C, last_grant_N;
-
-    // State machine transitions
+    always_comb begin
+        if (hold_C)
+            sel = sel_C;
+        else if (s_dma_req_0.valid && s_dma_req_1.valid)
+            sel = !rr_C;
+        else
+            sel = s_dma_req_1.valid;
+    end
 
     always_ff @(posedge aclk) begin
         if (!aresetn) begin
-            state_C <= ST_IDLE;
-            last_grant_C <= 1'b0;
+            hold_C <= 1'b0;
+            sel_C  <= 1'b0;
+            rr_C   <= 1'b1;
         end else begin
-            state_C <= state_N;
-            last_grant_C <= last_grant_N;
+            hold_C <= m_dma_req.valid && !m_dma_req.ready;
+            sel_C  <= sel;
+            if (fire) rr_C <= sel;
         end
     end
 
-    // Next state logic
+    // Request
+    assign m_dma_req.valid   = (sel ? s_dma_req_1.valid : s_dma_req_0.valid) && seq_in.ready && cpl_in_ready;
+    assign m_dma_req.req     = sel ? s_dma_req_1.req : s_dma_req_0.req;
+    assign s_dma_req_0.ready = !sel && m_dma_req.ready && seq_in.ready && cpl_in_ready;
+    assign s_dma_req_1.ready =  sel && m_dma_req.ready && seq_in.ready && cpl_in_ready;
+    assign fire              = m_dma_req.valid && m_dma_req.ready;
 
-    always_comb begin
-        state_N = state_C;
-        last_grant_N = last_grant_C;
+    // Data sequence
+    assign seq_in.valid     = fire;
+    assign seq_in.data.vfid = sel;
+    assign seq_in.data.len  = (m_dma_req.req.len - 1) >> BEAT_LOG_BITS;
+    assign seq_in.data.last = m_dma_req.req.last;
 
-        case (state_C)
-            ST_IDLE: begin
-                // Round-robin arbitration
-                if (last_grant_C == 1'b1) begin
-                    // Last was port 1, check port 0 first
-                    if (s_dma_req_0.valid) begin
-                        state_N = ST_GRANT_0_REQ;
-                    end else if (s_dma_req_1.valid) begin
-                        state_N = ST_GRANT_1_REQ;
-                    end
-                end else begin
-                    // Last was port 0, check port 1 first
-                    if (s_dma_req_1.valid) begin
-                        state_N = ST_GRANT_1_REQ;
-                    end else if (s_dma_req_0.valid) begin
-                        state_N = ST_GRANT_0_REQ;
-                    end
-                end
-            end
+    queue_stream #(
+        .QTYPE(mux_host_t),
+        .QDEPTH(SEQ_DEPTH)
+    ) inst_seq_que (
+        .aclk(aclk),
+        .aresetn(aresetn),
+        .val_snk(seq_in.valid),
+        .rdy_snk(seq_in.ready),
+        .data_snk(seq_in.data),
+        .val_src(seq_out.valid),
+        .rdy_src(seq_out.ready),
+        .data_src(seq_out.data)
+    );
 
-            ST_GRANT_0_REQ: begin
-                if (m_dma_req.valid && m_dma_req.ready) begin
-                    state_N = ST_GRANT_0_DATA;
-                end
-            end
+    AXI4S axis_in [2] (.aclk(aclk), .aresetn(aresetn));
+    `AXIS_ASSIGN(s_axis_0, axis_in[0])
+    `AXIS_ASSIGN(s_axis_1, axis_in[1])
 
-            ST_GRANT_1_REQ: begin
-                if (m_dma_req.valid && m_dma_req.ready) begin
-                    state_N = ST_GRANT_1_DATA;
-                end
-            end
+    axis_mux_host_sink #(
+        .N_ID(2)
+    ) inst_data_mux (
+        .aclk(aclk),
+        .aresetn(aresetn),
+        .s_mux(seq_out),
+        .s_axis(axis_in),
+        .m_axis(m_axis)
+    );
 
-            ST_GRANT_0_DATA: begin
-                if (m_axis.tvalid && m_axis.tready && m_axis.tlast) begin
-                    last_grant_N = 1'b0;
-                    state_N = ST_IDLE;
-                end
-            end
+    // Completion sequence
+    queue_stream #(
+        .QTYPE(logic),
+        .QDEPTH(CPL_DEPTH)
+    ) inst_cpl_que (
+        .aclk(aclk),
+        .aresetn(aresetn),
+        .val_snk(fire && m_dma_req.req.last),
+        .rdy_snk(cpl_in_ready),
+        .data_snk(sel),
+        .val_src(cpl_out_valid),
+        .rdy_src(m_dma_req.rsp.done),
+        .data_src(cpl_out_port)
+    );
 
-            ST_GRANT_1_DATA: begin
-                if (m_axis.tvalid && m_axis.tready && m_axis.tlast) begin
-                    last_grant_N = 1'b1;
-                    state_N = ST_IDLE;
-                end
-            end
-
-            default: begin
-                state_N = ST_IDLE;
-            end
-        endcase
-    end
-
-    // Output muxing - DMA Request
-    // READY depends on the registered grant and downstream READY only.
-    // Keep it outside payload muxing to avoid combinational handshake feedback.
-    assign s_dma_req_0.ready = (state_C == ST_GRANT_0_REQ) && m_dma_req.ready;
-    assign s_dma_req_1.ready = (state_C == ST_GRANT_1_REQ) && m_dma_req.ready;
-    assign s_axis_0.tready = (state_C == ST_GRANT_0_DATA) && m_axis.tready;
-    assign s_axis_1.tready = (state_C == ST_GRANT_1_DATA) && m_axis.tready;
-
-    always_comb begin
-        // Default: tie-off
-        m_dma_req.valid = 1'b0;
-        m_dma_req.req = '0;
-
-        case (state_C)
-            ST_GRANT_0_REQ: begin
-                m_dma_req.valid = s_dma_req_0.valid;
-                m_dma_req.req = s_dma_req_0.req;
-            end
-
-            ST_GRANT_1_REQ: begin
-                m_dma_req.valid = s_dma_req_1.valid;
-                m_dma_req.req = s_dma_req_1.req;
-            end
-
-            default: begin
-                // Keep defaults
-            end
-        endcase
-    end
-
-    // DMA response routing
     always_comb begin
         s_dma_req_0.rsp = '0;
         s_dma_req_1.rsp = '0;
-
-        case (state_C)
-            ST_GRANT_0_REQ, ST_GRANT_0_DATA: begin
-                s_dma_req_0.rsp = m_dma_req.rsp;
-            end
-
-            ST_GRANT_1_REQ, ST_GRANT_1_DATA: begin
-                s_dma_req_1.rsp = m_dma_req.rsp;
-            end
-
-            default: begin
-                // Keep defaults
-            end
-        endcase
-    end
-
-    // Output muxing - AXI4S Data
-
-    always_comb begin
-        // Default: tie-off
-        m_axis.tvalid = 1'b0;
-        m_axis.tdata = '0;
-        m_axis.tkeep = '0;
-        m_axis.tlast = 1'b0;
-
-        case (state_C)
-            ST_GRANT_0_DATA: begin
-                m_axis.tvalid = s_axis_0.tvalid;
-                m_axis.tdata = s_axis_0.tdata;
-                m_axis.tkeep = s_axis_0.tkeep;
-                m_axis.tlast = s_axis_0.tlast;
-            end
-
-            ST_GRANT_1_DATA: begin
-                m_axis.tvalid = s_axis_1.tvalid;
-                m_axis.tdata = s_axis_1.tdata;
-                m_axis.tkeep = s_axis_1.tkeep;
-                m_axis.tlast = s_axis_1.tlast;
-            end
-
-            default: begin
-                // Keep defaults
-            end
-        endcase
+        s_dma_req_0.rsp.done = m_dma_req.rsp.done && cpl_out_valid && !cpl_out_port;
+        s_dma_req_1.rsp.done = m_dma_req.rsp.done && cpl_out_valid &&  cpl_out_port;
     end
 
 endmodule
