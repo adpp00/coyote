@@ -30,6 +30,14 @@ Network specific interfaces: if the user specifies a network stack (TCP/IP or RD
 
 * ``axis_rrsp_send|recv``: This interface is used for transporting remotely requested data from/to the vFPGA to/from the RDMA stack as payload for outgoing RDMA_READ_RESPONSE operations.
 
+Storage specific interfaces: if NVMe is enabled in the build parameters (``EN_NVME = 1``), the following interfaces are exposed in the vFPGA:
+
+* ``m_nvme_sq``: Send queue for NVMe reads/writes: a streaming interface used for issuing a read or write of an NVMe SSD, by specifying the device, byte offset, buffer virtual address, length, etc. (``nvme_req_t``).
+
+* ``s_nvme_cq_rsp``: A streaming interface which returns one response per accepted NVMe request, in submission order, carrying the assigned command ID or a local error.
+
+* ``s_nvme_cpl``: Completion queue for NVMe commands: a streaming interface to receive the completion (``nvme_cqe_t``) of every submitted NVMe command.
+
 Similar to the hardware interfaces, Coyote also provides a generic and unified software handle to users, allowing them to efficiently control the vFPGAs from host software. 
 The core concept here is the Coyote Thread (``cThread``), which maps to a single vFPGA. As shown in Example 1, data movements can be invoked from such a thread, and the completion of such operations be checked by polling the respective status registers associated with this thread.
 
@@ -67,6 +75,16 @@ Notably, these stacks place the FPGA as an equal-class citizen in the datacenter
 More specifically, Coyote can be used as a basis for building SmartNICs and SmartHubs by offering application offload directly on the network datapaths. 
 For many stream-based data preprocessing tasks, such as ML data pre-processing, such off-loads can significantly improve performance, compared to off-datapath processing, which is available in many commercial SmartNICs and Data Processing Units.
 Another benefit of Coyote compared to commercial platforms lies in the fact that both of the network stacks are completely open-source and can therefore be customized and modified in new ways to test new concepts of high-performance networking. 
+
+
+Storage
+-----------------------------
+Coyote can attach NVMe SSDs to the shell, allowing vFPGAs to read and write SSD blocks directly, with no CPU involvement on the data path.
+The shell keeps the NVMe queues and PRP lists in on-chip memory, builds the NVMe commands from vFPGA requests and routes the completions back to the issuing vFPGA.
+Data moves directly between the SSD and a buffer in host memory or, on supported configurations, in the FPGA-attached HBM, with buffer addresses translated by the vFPGA's MMU.
+SSDs can sit in a PCIe slot of the host (``NVME_TYPE = HOST``; U55C, U280 and V80) or be attached to the FPGA's MCIO ports (``NVME_TYPE = PL``; V80).
+An SSD can be shared by multiple vFPGAs, each with its own range of logical blocks, which is enforced in hardware.
+For more details, see :ref:`nvme-storage` and *Example 14: NVMe SSD Bandwidth Test*.
 
 
 GPU integration

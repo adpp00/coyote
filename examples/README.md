@@ -25,6 +25,7 @@ Coyote currently includes ten examples, covering the following concepts:
 - **Example 9: Using the FPGA as a SmartNIC for Remote Direct Memory Access:** How to do networking with Coyote's internal, 100G, fully RoCEv2-compliant networking stack.
 - **Example 10: Application reconfiguration and background services [ADVANCED]:** How to dynamically load Coyote applications to a system-wide service, which automatically schedules tasks and reconfigures the FPGA with the corrects bitstream, based on client requests. 
 - **Example 11: Packet sniffer [ADVANCED]:** Shows a custom-built Coyote service and user application which can capture all incoming traffic in real-time, filter it based on header rules and export it to a .pcap file for analysis with Wireshark.
+- **Example 14: NVMe SSD bandwidth test:** How to read and write NVMe SSDs directly from a vFPGA, with SSDs attached to the host or to the FPGA's own PCIe root complex (V80), using host memory or HBM as the buffer.
 
 ## Building the examples
 #### Hardware synthesis

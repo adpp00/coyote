@@ -41,8 +41,8 @@
 #define DEFAULT_VFPGA_ID 0
 #define DEFAULT_NSID 1
 
-// Coyote LOCAL_OFFLOAD / LOCAL_SYNC chunk limit
-static constexpr uint64_t OFFLOAD_MAX = 128ULL * 1024ULL * 1024ULL;
+// Number of device FSMs in the vFPGA (BENCH_MAX_DEVS in vfpga_top.svh)
+#define BENCH_MAX_DEVS 4
 
 // CSR register map; must match perf_nvme_axi_ctrl_parser
 enum class BenchmarkRegisters : uint32_t {
@@ -105,8 +105,14 @@ static std::string formatBW(double bytes_per_sec) {
     return std::string(buf);
 }
 
-// Run one benchmark pass and report the aggregated bandwidth
-static void run_bench(
+// Verify pattern: each 8-byte word is a hash of its index
+static inline uint8_t patternByte(uint64_t i, uint8_t salt) {
+    const uint64_t word = (i >> 3) * 0x9E3779B97F4A7C15ULL;
+    return (uint8_t)((word >> (8 * (i & 7))) + salt);
+}
+
+// Run one benchmark pass, report the aggregated bandwidth and return ERROR_REG
+static uint16_t run_bench(
     coyote::cThread& coyote_thread, void* buf,
     uint64_t chunk_size, uint32_t n_reps, uint16_t dev_mask, uint32_t n_active_devs,
     uint32_t max_outstanding, BenchmarkOperation oper, const std::string& tag
@@ -138,6 +144,7 @@ static void run_bench(
               << " | "       << cycles << " cycles"
               << " | err=0x" << std::hex << err << std::dec
               << std::endl;
+    return err;
 }
 
 int main(int argc, char* argv[]) {
@@ -148,6 +155,7 @@ int main(int argc, char* argv[]) {
     std::string alloc_str;
     uint32_t max_outstanding;
     int vfpga_id;
+    int32_t mem_block;
     bool read_only;
     bool write_only;
     bool use_fpga_mem;
@@ -165,6 +173,7 @@ int main(int argc, char* argv[]) {
         ("read-only,r",   po::bool_switch(&read_only),                                          "Run the READ benchmark only")
         ("write-only,w",  po::bool_switch(&write_only),                                         "Run the WRITE benchmark only")
         ("fpga-mem,f",    po::bool_switch(&use_fpga_mem),                                        "Place the buffer in FPGA HBM (SSD DMAs to/from HBM); default is host memory")
+        ("mem-block,m",   po::value<int32_t>(&mem_block)->default_value(-1),                     "Card memory block of the buffer (V80 only); default: chosen by the driver")
         ("verify,V",      po::bool_switch(&do_verify),                                            "Data integrity check: write pattern -> clear buffer -> read back -> memcmp");
 
     po::variables_map command_line_arguments;
@@ -189,6 +198,14 @@ int main(int argc, char* argv[]) {
         throw std::runtime_error(
             "--total " + formatSize(total_size) + " is too large; the buffer size must not exceed " +
             std::to_string(UINT32_MAX) + " bytes (4 GB - 1)"
+        );
+    }
+
+    // The HBM buffer moves in one LOCAL_OFFLOAD / LOCAL_SYNC (at most 128 MB)
+    if (use_fpga_mem && total_size > coyote::MAX_TRANSFER_SIZE) {
+        throw std::runtime_error(
+            "--total " + formatSize(total_size) + " is too large for --fpga-mem; the limit is " +
+            formatSize(coyote::MAX_TRANSFER_SIZE)
         );
     }
 
@@ -224,6 +241,17 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "DEV_MASK:    0x" << std::hex << dev_mask << std::dec << std::endl;
     const uint32_t n_active_devs = (uint32_t) __builtin_popcount(dev_mask);
+
+    // The vFPGA drives device IDs 0 .. BENCH_MAX_DEVS - 1 only
+    for (const auto& dev : devs) {
+        if (dev.dev_id >= BENCH_MAX_DEVS) {
+            for (const auto& d : devs) { coyote_thread.closeNVMe(d.dev_id); }
+            throw std::runtime_error(
+                "dev_id " + std::to_string(dev.dev_id) + " is not driven by this vFPGA (IDs 0-" +
+                std::to_string(BENCH_MAX_DEVS - 1) + " only)"
+            );
+        }
+    }
 
     // The shell queues at most queue_depth - 1 commands per device
     for (const auto& dev : devs) {
@@ -262,10 +290,20 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // Every run transfers the whole buffer in n_reps commands
+    if (total_size < actual_chunk || (total_size % actual_chunk) != 0) {
+        for (const auto& d : devs) { coyote_thread.closeNVMe(d.dev_id); }
+        throw std::runtime_error(
+            "total size " + std::to_string(total_size) +
+            " is not a multiple of the chunk size " + std::to_string(actual_chunk)
+        );
+    }
     const uint32_t n_reps = (uint32_t)(total_size / actual_chunk);
 
     // Allocate the host buffer; populate with a pattern (so writes to the SSD have meaningful bytes)
-    void* buf = coyote_thread.getMem({coyote::CoyoteAllocType::HPF, static_cast<uint32_t>(total_size)});
+    coyote::CoyoteAlloc buf_alloc = {coyote::CoyoteAllocType::HPF, static_cast<uint32_t>(total_size)};
+    buf_alloc.mem_block = mem_block;
+    void* buf = coyote_thread.getMem(std::move(buf_alloc));
     if (!buf) {
         for (const auto& d : devs) { coyote_thread.closeNVMe(d.dev_id); }
         throw std::runtime_error("could not allocate host buffer");
@@ -274,14 +312,11 @@ int main(int argc, char* argv[]) {
 
     // With --fpga-mem, offload the buffer to FPGA HBM. This re-maps the TLB so the buffer's physical
     // pages now live in card memory; the NVMe PRP entries then reference HBM and the SSD DMAs straight
-    // to/from HBM (peer-to-peer) instead of host DRAM. Offload is chunked at the Coyote 128 MB limit.
+    // to/from HBM (peer-to-peer) instead of host DRAM.
     if (use_fpga_mem) {
         std::cout << "Offloading " << formatSize(total_size) << " to FPGA HBM..." << std::endl;
-        for (uint64_t off = 0; off < total_size; off += OFFLOAD_MAX) {
-            const uint64_t len = std::min(OFFLOAD_MAX, total_size - off);
-            coyote_thread.invoke(coyote::CoyoteOper::LOCAL_OFFLOAD,
-                                 coyote::syncSg{reinterpret_cast<uint8_t*>(buf) + off, static_cast<uint32_t>(len)});
-        }
+        coyote_thread.invoke(coyote::CoyoteOper::LOCAL_OFFLOAD,
+                             coyote::syncSg{buf, static_cast<uint32_t>(total_size)});
     }
 
     // Per-device sweep
@@ -298,72 +333,73 @@ int main(int argc, char* argv[]) {
     if (do_write) run_bench(coyote_thread, buf, actual_chunk, n_reps, dev_mask, n_active_devs, max_outstanding, BenchmarkOperation::START_WR, "WRITE");
     if (do_read)  run_bench(coyote_thread, buf, actual_chunk, n_reps, dev_mask, n_active_devs, max_outstanding, BenchmarkOperation::START_RD, "READ");
 
-    // Data Integrity Verification (--verify): write pattern -> clear -> read -> memcmp.
+    // Data Integrity Verification (--verify): write pattern -> clear -> read -> memcmp, per device
     if (do_verify) {
         HEADER("DATA INTEGRITY VERIFY");
         uint8_t* host_buf = reinterpret_cast<uint8_t*>(buf);
 
-        std::cout << "1. Fill buffer with pattern (i & 0xFF)... " << std::flush;
-        for (uint64_t i = 0; i < total_size; i++) host_buf[i] = (uint8_t)(i & 0xFF);
-        if (use_fpga_mem) {
-            for (uint64_t off = 0; off < total_size; off += OFFLOAD_MAX) {
-                const uint64_t len = std::min(OFFLOAD_MAX, total_size - off);
+        for (const auto& dev : devs) {
+            const uint16_t single_mask = (uint16_t)(1u << dev.dev_id);
+            const uint8_t  salt        = (uint8_t)(getpid() + 37 * dev.dev_id);
+            std::cout << "--- dev_id=" << dev.dev_id << " ---" << std::endl;
+
+            std::cout << "1. Fill buffer with pattern (salt 0x" << std::hex << (int)salt << std::dec
+                      << ")... " << std::flush;
+            for (uint64_t i = 0; i < total_size; i++) host_buf[i] = patternByte(i, salt);
+            if (use_fpga_mem) {
                 coyote_thread.invoke(coyote::CoyoteOper::LOCAL_OFFLOAD,
-                                     coyote::syncSg{host_buf + off, static_cast<uint32_t>(len)});
-            }
-        }
-        std::cout << "OK" << std::endl;
-
-        std::cout << "2. NVMe WRITE to SSD..." << std::endl;
-        run_bench(coyote_thread, buf, actual_chunk, n_reps, dev_mask,
-                  n_active_devs, max_outstanding, BenchmarkOperation::START_WR, "VERIFY-WR");
-
-        std::cout << "3. Clear host buffer... " << std::flush;
-        std::memset(host_buf, 0x00, total_size);
-        if (use_fpga_mem) {
-            for (uint64_t off = 0; off < total_size; off += OFFLOAD_MAX) {
-                const uint64_t len = std::min(OFFLOAD_MAX, total_size - off);
-                coyote_thread.invoke(coyote::CoyoteOper::LOCAL_OFFLOAD,
-                                     coyote::syncSg{host_buf + off, static_cast<uint32_t>(len)});
-            }
-        }
-        std::cout << "OK" << std::endl;
-
-        std::cout << "4. NVMe READ from SSD..." << std::endl;
-        run_bench(coyote_thread, buf, actual_chunk, n_reps, dev_mask,
-                  n_active_devs, max_outstanding, BenchmarkOperation::START_RD, "VERIFY-RD");
-
-        if (use_fpga_mem) {
-            std::cout << "5. Sync HBM -> host... " << std::flush;
-            for (uint64_t off = 0; off < total_size; off += OFFLOAD_MAX) {
-                const uint64_t len = std::min(OFFLOAD_MAX, total_size - off);
-                coyote_thread.invoke(coyote::CoyoteOper::LOCAL_SYNC,
-                                     coyote::syncSg{host_buf + off, static_cast<uint32_t>(len)});
+                                     coyote::syncSg{host_buf, static_cast<uint32_t>(total_size)});
             }
             std::cout << "OK" << std::endl;
-        }
 
-        std::cout << "6. memcmp..." << std::endl;
-        uint64_t errors = 0;
-        uint64_t first_err_off = UINT64_MAX;
-        for (uint64_t i = 0; i < total_size; i++) {
-            const uint8_t expected = (uint8_t)(i & 0xFF);
-            if (host_buf[i] != expected) {
-                if (errors < 16) {
-                    std::cout << "   MISMATCH @ 0x" << std::hex << i
-                              << ": got=0x" << (int)host_buf[i]
-                              << " expected=0x" << (int)expected
-                              << std::dec << std::endl;
-                }
-                if (first_err_off == UINT64_MAX) first_err_off = i;
-                errors++;
+            std::cout << "2. NVMe WRITE to SSD..." << std::endl;
+            const uint16_t wr_err = run_bench(coyote_thread, buf, actual_chunk, n_reps, single_mask,
+                                              1, max_outstanding, BenchmarkOperation::START_WR, "VERIFY-WR");
+
+            std::cout << "3. Clear host buffer... " << std::flush;
+            std::memset(host_buf, 0x00, total_size);
+            if (use_fpga_mem) {
+                coyote_thread.invoke(coyote::CoyoteOper::LOCAL_OFFLOAD,
+                                     coyote::syncSg{host_buf, static_cast<uint32_t>(total_size)});
             }
-        }
-        if (errors == 0) {
-            std::cout << "   PASS - " << formatSize(total_size) << " verified OK" << std::endl;
-        } else {
-            std::cout << "   FAIL - " << errors << " byte mismatches"
-                      << " (first @ 0x" << std::hex << first_err_off << std::dec << ")" << std::endl;
+            std::cout << "OK" << std::endl;
+
+            std::cout << "4. NVMe READ from SSD..." << std::endl;
+            const uint16_t rd_err = run_bench(coyote_thread, buf, actual_chunk, n_reps, single_mask,
+                                              1, max_outstanding, BenchmarkOperation::START_RD, "VERIFY-RD");
+
+            if (use_fpga_mem) {
+                std::cout << "5. Sync HBM -> host... " << std::flush;
+                coyote_thread.invoke(coyote::CoyoteOper::LOCAL_SYNC,
+                                     coyote::syncSg{host_buf, static_cast<uint32_t>(total_size)});
+                std::cout << "OK" << std::endl;
+            }
+
+            std::cout << "6. memcmp..." << std::endl;
+            uint64_t errors = 0;
+            uint64_t first_err_off = UINT64_MAX;
+            for (uint64_t i = 0; i < total_size; i++) {
+                const uint8_t expected = patternByte(i, salt);
+                if (host_buf[i] != expected) {
+                    if (errors < 16) {
+                        std::cout << "   MISMATCH @ 0x" << std::hex << i
+                                  << ": got=0x" << (int)host_buf[i]
+                                  << " expected=0x" << (int)expected
+                                  << std::dec << std::endl;
+                    }
+                    if (first_err_off == UINT64_MAX) first_err_off = i;
+                    errors++;
+                }
+            }
+            if (wr_err || rd_err) {
+                std::cout << "   FAIL - commands failed (write err=0x" << std::hex << wr_err
+                          << ", read err=0x" << rd_err << std::dec << ")" << std::endl;
+            } else if (errors == 0) {
+                std::cout << "   PASS - " << formatSize(total_size) << " verified OK" << std::endl;
+            } else {
+                std::cout << "   FAIL - " << errors << " byte mismatches"
+                          << " (first @ 0x" << std::hex << first_err_off << std::dec << ")" << std::endl;
+            }
         }
     }
 

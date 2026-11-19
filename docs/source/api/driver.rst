@@ -18,6 +18,11 @@ coyote_sysfs.h
 .. doxygenfile:: coyote_sysfs.h 
    :project: docs-driver
 
+coyote_nvme.h
+------------------------------------
+.. doxygenfile:: coyote_nvme.h
+   :project: docs-driver
+
 vfpga_gup.h
 ------------------------------------
 .. doxygenfile:: vfpga_gup.h 

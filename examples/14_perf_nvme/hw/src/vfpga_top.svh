@@ -322,12 +322,14 @@ end
 // cq_rsp is {device[15:12], CID[11:4], local error[3:0]} at every queue depth.
 // Successful assignments do not change completion/inflight counters. This
 // counting benchmark does not need a request-to-CID map.
-// Sticky local error capture; keep the existing zero-extended ERROR_REG format.
+// Sticky error capture: local error, or {1, NVMe status}
 always_ff @(posedge aclk) begin
     if (!aresetn)                                                last_error <= '0;
     else if (go_pulse)                                           last_error <= '0;
     else if (s_nvme_cq_rsp.valid && s_nvme_cq_rsp.ready && s_nvme_cq_rsp.data[NVME_RSP_ERROR_BITS-1:0] != 0)
         last_error <= 16'(s_nvme_cq_rsp.data[NVME_RSP_ERROR_BITS-1:0]);
+    else if (s_nvme_cpl.valid && s_nvme_cpl.ready && s_nvme_cpl.data.status != 0)
+        last_error <= {1'b1, s_nvme_cpl.data.status};
 end
 
 ///////////////////////////////////////
