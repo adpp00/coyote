@@ -38,7 +38,8 @@ import lynxTypes::*;
  */
 module nvme_sq_ctrl #(
     parameter int unsigned SQ_ADDR_BITS = 6,  // 64 entries per device
-    parameter int unsigned N_NVME_BITS  = 4   // number of NVMe devices bits
+    parameter int unsigned N_NVME_BITS  = 4,  // number of NVMe devices bits
+    parameter int unsigned NUM_DEVICES  = NVME_NUM_DEVICES   // instantiated devices
 )(
     input  logic        aclk,
     input  logic        aresetn,
@@ -52,6 +53,8 @@ module nvme_sq_ctrl #(
 );
 
     localparam int unsigned ADDR_BITS = SQ_ADDR_BITS + N_NVME_BITS;
+    // RAM depth
+    localparam int unsigned RAM_BITS  = SQ_ADDR_BITS + ((NUM_DEVICES > 1) ? $clog2(NUM_DEVICES) : 0);
 
     localparam int unsigned BRAM_BYTE_BITS  = 6;  // log2(512/8)
     localparam int unsigned BRAM_ADDR_WIDTH = ADDR_BITS + BRAM_BYTE_BITS;  // 16
@@ -204,16 +207,16 @@ module nvme_sq_ctrl #(
     logic [215:0] b_data_out_raw;
 
     ram_sdp_nc #(
-        .ADDR_BITS (ADDR_BITS),
+        .ADDR_BITS (RAM_BITS),
         .DATA_BITS (216)
     ) inst_nvme_sq_bram (
         .clk        (aclk),
         .a_en       (a_en),
         .a_we       (a_we),
-        .a_addr     (a_addr),
+        .a_addr     (a_addr[RAM_BITS-1:0]),
         .a_data_in  (a_data_in),
         .b_en       (bram_en_a),
-        .b_addr     (b_addr),
+        .b_addr     (b_addr[RAM_BITS-1:0]),
         .b_data_out (b_data_out_raw)
     );
 

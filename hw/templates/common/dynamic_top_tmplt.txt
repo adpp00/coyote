@@ -1167,9 +1167,52 @@ module design_dynamic_top #(
     // ================-----------------------------------------------------------------
 
     // User interfaces
+    metaIntf #(.STYPE(nvme_req_t))   nvme_req_user [N_REGIONS] ();
+    metaIntf #(.STYPE(logic [15:0])) nvme_rsp_user [N_REGIONS] ();
+    metaIntf #(.STYPE(nvme_cqe_t))   nvme_cpl_user [N_REGIONS] ();
+
+    // Clock crossing (if enabled)
+    metaIntf #(.STYPE(nvme_req_t))   nvme_req_user_s0 [N_REGIONS] ();
+    metaIntf #(.STYPE(logic [15:0])) nvme_rsp_user_s0 [N_REGIONS] ();
+    metaIntf #(.STYPE(nvme_cqe_t))   nvme_cpl_user_s0 [N_REGIONS] ();
+
+    for(genvar i = 0; i < N_REGIONS; i++) begin
+{% if cnfg.en_uclk %}
+        meta_ccross #(.DATA_BITS($bits(nvme_req_t))) (.s_aclk(uclk), .s_aresetn(uresetn), .m_aclk(aclk), .m_aresetn(aresetn), .s_meta(nvme_req_user_s0[i]), .m_meta(nvme_req_user[i]));
+        meta_ccross #(.DATA_BITS(16)) (.s_aclk(aclk), .s_aresetn(aresetn), .m_aclk(uclk), .m_aresetn(uresetn), .s_meta(nvme_rsp_user[i]), .m_meta(nvme_rsp_user_s0[i]));
+        meta_ccross #(.DATA_BITS($bits(nvme_cqe_t))) (.s_aclk(aclk), .s_aresetn(aresetn), .m_aclk(uclk), .m_aresetn(uresetn), .s_meta(nvme_cpl_user[i]), .m_meta(nvme_cpl_user_s0[i]));
+{% else %}
+        `META_ASSIGN(nvme_req_user_s0[i], nvme_req_user[i])
+        `META_ASSIGN(nvme_rsp_user[i], nvme_rsp_user_s0[i])
+        `META_ASSIGN(nvme_cpl_user[i], nvme_cpl_user_s0[i])
+{% endif %}
+    end
+
+    // Slice
+    metaIntf #(.STYPE(nvme_req_t))   nvme_req_user_s1 [N_REGIONS] ();
+    metaIntf #(.STYPE(logic [15:0])) nvme_rsp_user_s1 [N_REGIONS] ();
+    metaIntf #(.STYPE(nvme_cqe_t))   nvme_cpl_user_s1 [N_REGIONS] ();
+
+    for(genvar i = 0; i < N_REGIONS; i++) begin
+{% if cnfg.en_uclk %}
+        meta_reg_array #(.DATA_BITS($bits(nvme_req_t)), .N_STAGES(N_REG_DYN_HOST_S1)) (.aclk(uclk), .aresetn(uresetn), .s_meta(nvme_req_user_s1[i]), .m_meta(nvme_req_user_s0[i]));
+        meta_reg_array #(.DATA_BITS(16), .N_STAGES(N_REG_DYN_HOST_S1)) (.aclk(uclk), .aresetn(uresetn), .s_meta(nvme_rsp_user_s0[i]), .m_meta(nvme_rsp_user_s1[i]));
+        meta_reg_array #(.DATA_BITS($bits(nvme_cqe_t)), .N_STAGES(N_REG_DYN_HOST_S1)) (.aclk(uclk), .aresetn(uresetn), .s_meta(nvme_cpl_user_s0[i]), .m_meta(nvme_cpl_user_s1[i]));
+{% else %}
+        meta_reg_array #(.DATA_BITS($bits(nvme_req_t)), .N_STAGES(N_REG_DYN_HOST_S1)) (.aclk(aclk), .aresetn(aresetn), .s_meta(nvme_req_user_s1[i]), .m_meta(nvme_req_user_s0[i]));
+        meta_reg_array #(.DATA_BITS(16), .N_STAGES(N_REG_DYN_HOST_S1)) (.aclk(aclk), .aresetn(aresetn), .s_meta(nvme_rsp_user_s0[i]), .m_meta(nvme_rsp_user_s1[i]));
+        meta_reg_array #(.DATA_BITS($bits(nvme_cqe_t)), .N_STAGES(N_REG_DYN_HOST_S1)) (.aclk(aclk), .aresetn(aresetn), .s_meta(nvme_cpl_user_s0[i]), .m_meta(nvme_cpl_user_s1[i]));
+{% endif %}
+    end
+
+    // Decoupling
     metaIntf #(.STYPE(nvme_req_t))   nvme_req_user_ul [N_REGIONS] ();
     metaIntf #(.STYPE(logic [15:0])) nvme_rsp_user_ul [N_REGIONS] ();
     metaIntf #(.STYPE(nvme_cqe_t))   nvme_cpl_user_ul [N_REGIONS] ();
+
+    meta_decoupler (.decouple(decouple_uclk), .s_meta(nvme_req_user_ul), .m_meta(nvme_req_user_s1));
+    meta_decoupler (.decouple(decouple_uclk), .s_meta(nvme_rsp_user_s1), .m_meta(nvme_rsp_user_ul));
+    meta_decoupler (.decouple(decouple_uclk), .s_meta(nvme_cpl_user_s1), .m_meta(nvme_cpl_user_ul));
 
     // NVMe translations
     metaIntf #(.STYPE(nvme_mmu_req_t))   nvme_mmu_req ();
@@ -1184,9 +1227,9 @@ module design_dynamic_top #(
     nvme_top inst_nvme_top (
         .aclk(aclk),
         .aresetn(aresetn),
-        .s_nvme_user_req(nvme_req_user_ul),
-        .m_nvme_user_rsp(nvme_rsp_user_ul),
-        .m_nvme_cpl(nvme_cpl_user_ul),
+        .s_nvme_user_req(nvme_req_user),
+        .m_nvme_user_rsp(nvme_rsp_user),
+        .m_nvme_cpl(nvme_cpl_user),
         .m_nvme_rd_sq(nvme_mmu_req),
         .s_nvme_rd_rsp(nvme_mmu_rsp),
 {% if cnfg.en_nvme_host %}

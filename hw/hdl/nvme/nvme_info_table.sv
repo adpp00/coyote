@@ -80,6 +80,7 @@ module nvme_info_table #(
 
     // Temporaries
     logic             rsp_free;
+    logic [VADDR_BITS-1:0] lba_mask;
     logic             request_ready;
     logic [NVME_QUEUE_BITS-1:0] rsp_cid_C;
     logic [NVME_QUEUE_BITS-1:0] next_sq_tail;
@@ -240,6 +241,10 @@ module nvme_info_table #(
         // Response slot is free when empty or being consumed this cycle
         rsp_free = (~rsp_valid_C) || (rsp_valid_C && m_tbl_rsp.ready);
 
+        // LBA mask
+        lba_mask = (s_tbl_req.data.dev_id < MAX_NVME_DEVICES && s_tbl_req.data.nsid < MAX_NSID) ?
+            (VADDR_BITS'(1) << nvme_info_tbl[s_tbl_req.data.dev_id][s_tbl_req.data.nsid].lbaf) - 1'b1 : '0;
+
         // Clear valid when consumed
         if (rsp_valid_C && m_tbl_rsp.ready) begin
             rsp_valid_N = 1'b0;
@@ -281,8 +286,9 @@ module nvme_info_table #(
                          !perm_table[s_tbl_req.data.region_id][s_tbl_req.data.dev_id].valid) begin
                     rsp_N.error = NVME_PERMISSION_DENIED;
                 end
-                // Permission check: non-empty and within allowed range?
+                // Permission check: whole LBAs within allowed range?
                 else if (s_tbl_req.data.len == '0 ||
+                         ((s_tbl_req.data.naddr | s_tbl_req.data.len) & lba_mask) != '0 ||
                          (s_tbl_req.data.naddr + s_tbl_req.data.len) >
                          perm_table[s_tbl_req.data.region_id][s_tbl_req.data.dev_id].lba_size) begin
                     rsp_N.error = NVME_PERMISSION_DENIED;

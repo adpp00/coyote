@@ -110,6 +110,8 @@ module nvme_top (
 `ifdef MULT_REGIONS
     // Per-(region,device) NVMe outstanding credits (multi-region)
     logic [7:0]                 credit_cnt [N_REGIONS][N_NVME];
+    // Response credit
+    logic [$clog2(NVME_N_OUTSTANDING*N_NVME+1)-1:0] rsp_cnt [N_REGIONS];
 `endif
 
     // Pipeline internal signals
@@ -220,9 +222,10 @@ module nvme_top (
             && nvme_pl_ready
 `endif
             ;
-        assign user_req_cred[i].valid  = s_nvme_user_req[i].valid && cred_ok;
+        wire rsp_ok = (rsp_cnt[i] < NVME_N_OUTSTANDING*N_NVME);
+        assign user_req_cred[i].valid  = s_nvme_user_req[i].valid && cred_ok && rsp_ok;
         assign user_req_cred[i].data   = s_nvme_user_req[i].data;
-        assign s_nvme_user_req[i].ready = user_req_cred[i].ready && cred_ok;
+        assign s_nvme_user_req[i].ready = user_req_cred[i].ready && cred_ok && rsp_ok;
     end
 
     nvme_credit_arbiter #(
@@ -258,7 +261,7 @@ module nvme_top (
 `endif
 
     // Completion/terminal-error drain handshakes (per region, per device)
-    logic [N_REGIONS-1:0]   cpl_pop, rsp_pop;
+    logic [N_REGIONS-1:0]   cpl_pop, rsp_pop, rsp_acc;
     logic [N_NVME_BITS-1:0] cpl_dev [N_REGIONS];
     logic [N_NVME_BITS-1:0] rsp_dev [N_REGIONS];
 
@@ -327,6 +330,7 @@ module nvme_top (
         assign rsp_pop[i] = rsp_out[i].valid && rsp_out[i].ready &&
                             (rsp_out[i].data.error[NVME_RSP_ERROR_BITS-1:0] != 0);
         assign rsp_dev[i] = rsp_out[i].data.dev_id;
+        assign rsp_acc[i] = rsp_out[i].valid && rsp_out[i].ready;
     end
     assign user_rsp_pre.ready = rsp_fin_rdy[rsp_region];
 
@@ -345,6 +349,19 @@ module nvme_top (
                         + ((grant_fire && (arb_id == r) && (user_req_arb.data.dev_id == d)) ? 1'b1 : 1'b0)
                         - ((cpl_pop[r] && (cpl_dev[r] == d)) ? 1'b1 : 1'b0)
                         - ((rsp_pop[r] && (rsp_dev[r] == d)) ? 1'b1 : 1'b0);
+        end
+    end
+
+    // Response credit
+    always_ff @(posedge aclk) begin
+        if (!aresetn) begin
+            for (int r = 0; r < N_REGIONS; r++) rsp_cnt[r] <= '0;
+        end
+        else begin
+            for (int r = 0; r < N_REGIONS; r++)
+                rsp_cnt[r] <= rsp_cnt[r]
+                    + ((grant_fire && (arb_id == r)) ? 1'b1 : 1'b0)
+                    - (rsp_acc[r] ? 1'b1 : 1'b0);
         end
     end
 `endif

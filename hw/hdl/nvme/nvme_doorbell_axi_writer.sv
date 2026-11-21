@@ -75,6 +75,8 @@ module nvme_doorbell_axi_writer #(
     always_comb begin
         s_dma_req.ready = 1'b0;
         s_dma_req.rsp   = '0;
+        // One completion per write
+        s_dma_req.rsp.done = accept_b;
         s_axis_data.tready = 1'b0;
 
         m_axi_mmio.awaddr   = address_reg;

@@ -24,6 +24,9 @@
  * SOFTWARE.
  */
 
+#include <cerrno>
+#include <cstring>
+
 #include <coyote/cThread.hpp>
 
 namespace coyote {
@@ -1358,13 +1361,9 @@ nvmeInitIoctl cThread::initNVMe(const std::string& bdf, uint32_t nsid, uint64_t 
     req.size = size;
 
     if (ioctl(fd, IOCTL_NVME_INIT, &req)) {
-        throw std::runtime_error("ERROR: IOCTL_NVME_INIT failed");
-    }
-
-    if (req.result != 0) {
         throw std::runtime_error(
-            "ERROR: initNVMe failed for bdf=" + bdf + " nsid=" + std::to_string(nsid) +
-            ": driver result=" + std::to_string(req.result)
+            "ERROR: IOCTL_NVME_INIT failed for bdf=" + bdf + " nsid=" + std::to_string(nsid) +
+            ": " + std::strerror(errno)
         );
     }
 
@@ -1378,7 +1377,7 @@ void cThread::closeNVMe(uint32_t dev_id) {
 
     uint64_t arg = dev_id;
     if (ioctl(fd, IOCTL_NVME_CLOSE, &arg)) {
-        throw std::runtime_error("ERROR: IOCTL_NVME_CLOSE failed for dev_id=" + std::to_string(dev_id));
+        throw std::runtime_error("ERROR: IOCTL_NVME_CLOSE failed for dev_id=" + std::to_string(dev_id) + ": " + std::strerror(errno));
     }
 }
 
@@ -1390,7 +1389,7 @@ nvmeInitIoctl cThread::isNVMeRegistered(const std::string& bdf, uint32_t nsid) {
     req.nsid = nsid;
 
     if (ioctl(fd, IOCTL_NVME_IS_REGISTERED, &req)) {
-        throw std::runtime_error("ERROR: IOCTL_NVME_IS_REGISTERED failed");
+        throw std::runtime_error("ERROR: IOCTL_NVME_IS_REGISTERED failed: " + std::string(std::strerror(errno)));
     }
     return req;
 }

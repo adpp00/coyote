@@ -345,7 +345,7 @@ extern bool en_hmm;
 #define TLB_VADDR_RANGE 48
 #define TLB_PADDR_RANGE 44
 #define PID_SIZE 6
-#define STRM_SIZE 3
+#define STRM_SIZE 2
 #define MAX_N_MAP_PAGES 256  
 #define MAX_N_MAP_HUGE_PAGES 256
 #define MAX_N_REGIONS 16
@@ -360,8 +360,7 @@ extern bool en_hmm;
 /**
  * @brief Physical connection used by the NVMe controller.
  *
- * Bit 0 of shell_cnfg->nvme_cnfg remains the enable bit. Bit 1 selects this
- * topology, with zero retaining the existing host-connected behavior.
+ * shell_cnfg->nvme_cnfg bit 0: NVMe enable. Bit 1: 0 = host-connected, 1 = PL-connected.
  */
 enum coyote_nvme_type {
     COYOTE_NVME_TYPE_HOST = 0,
@@ -497,6 +496,8 @@ enum coyote_nvme_type {
 // Streaming flags, analogous to the definition in the software; HOST = 1, CARD = 0
 #define CARD_ACCESS 0
 #define HOST_ACCESS 1
+// NVMe PRP page faults (STRM_NVME_PF)
+#define NVME_ACCESS 2
 
 //////////////////////////////////////////////
 //              REGISTERS MAPS             //
@@ -653,12 +654,12 @@ struct vfpga_cnfg_regs {
 
 /**
  * @brief NVMe FPGA config registers; see nvme_cnfg_slave.sv for more details and register layout
- * Mapped at SHELL BAR + FPGA_NVME_CNFG_OFFS (0x8000); single instance shared by all regions
+ * Mapped at SHELL BAR + FPGA_NVME_CNFG_OFFS (0x4000); single instance shared by all regions
  * Used to push per-device info (LBA format, doorbell address, etc) and per-region LBA permissions to the FPGA
  */
 struct nvme_fpga_cnfg_regs {
     uint64_t fpga_bar_base;         // 0x00
-    uint64_t reserved_0;            // 0x08
+    uint64_t card_window;           // 0x08 - bit[0]=card memory reachable through the FPGA BAR
     uint64_t dev_id;                // 0x10
     uint64_t nsid;                  // 0x18
     uint64_t lbaf;                  // 0x20
@@ -669,7 +670,7 @@ struct nvme_fpga_cnfg_regs {
     uint64_t perm_dev_id;           // 0x48
     uint64_t perm_lba_offset;       // 0x50
     uint64_t perm_lba_size;         // 0x58
-    uint64_t perm_valid;            // 0x60 - W1S: bit[0]=commit permission
+    uint64_t perm_valid;            // 0x60 - W1S: bit[0]=commit permission, bit[1]=revoke permission
     /* The following registers exist only for PL-connected NVMe bitstreams. */
     uint64_t pl_status;             // 0x68 - read-only setup/readiness status
     uint64_t pl_nsid;               // 0x70 - read-only discovered namespace ID
@@ -1202,7 +1203,7 @@ struct reconfig_dev {
 /**
  * @brief Per-NVMe-SSD context; abstracts a single NVMe device claimed by the Coyote driver
  *
- * The driver takes over the NVMe device via PCI sysfs (driver_override), sets up an admin queue
+ * The driver takes over an NVMe device not bound to any driver, sets up an admin queue
  * via DMA-coherent buffers, enables the controller, identifies the namespace and creates an
  * I/O queue whose SQ/CQ memory lives in FPGA BRAM (so the SSD DMAs SQEs and CQEs to/from FPGA).
  * One nvme_dev_ctx exists per active NVMe device (up to MAX_NVME_DEVICES).
@@ -1237,6 +1238,9 @@ struct nvme_dev_ctx {
     /// Doorbell stride in bytes (from NVMe CAP register)
     uint32_t        db_stride;
 
+    /// CC.EN to CSTS.RDY timeout in ms (from CAP.TO)
+    uint32_t        cap_timeout_ms;
+
     /// Active namespace identified during init
     uint32_t        nsid;
     uint32_t        lba_size;
@@ -1255,8 +1259,7 @@ struct nvme_device_state {
     uint32_t dev_id;
     char     bdf[16];
     uint32_t nsid;
-    uint64_t next_free_lba;
-    uint16_t io_qid;                    /// NVMe I/O queue ID (1 + dev_id)
+    uint16_t io_qid;                    /// NVMe I/O queue ID
     uint64_t io_sq_phys;
     uint64_t io_cq_phys;
     bool     active;
@@ -1283,12 +1286,13 @@ struct nvme_manager {
 };
 
 /**
- * @brief NVMe initialization IOCTL request/response; passed to IOCTL_NVME_INIT
+ * @brief NVMe initialization IOCTL request/response; passed to IOCTL_NVME_INIT and IOCTL_NVME_IS_REGISTERED
  *
- * Input fields: bdf, nsid, size (requested byte range in the namespace).
+ * Input fields: bdf, nsid, size (requested byte range in the namespace; IOCTL_NVME_INIT only).
  * For PL-connected NVMe, bdf is ignored and the current single-device
  * contract fixes nsid to 1.
  * Output fields: result, dev_id, lba_size, nsze, lba_offset, lba_count, doorbell addresses, mdts
+ * IOCTL_NVME_IS_REGISTERED: result = -ENOENT if not registered
  */
 struct nvme_init_ioctl {
     // Input
@@ -1306,6 +1310,7 @@ struct nvme_init_ioctl {
     uint64_t sq_doorbell_addr;
     uint64_t cq_doorbell_addr;
     uint32_t mdts;
+    uint32_t queue_depth;
 } __packed;
 
 /// Placeholder for an empty kobject, used to avoid NULL pointer dereferences when removing the sysfs

@@ -39,6 +39,7 @@ module nvme_prp_ctrl #(
     parameter integer NVME_QUEUE_BITS = lynxTypes::NVME_QUEUE_BITS,  // Configured 64, 128, or 256 entries
     parameter integer PRP_ADDR_BITS   = lynxTypes::PRP_ADDR_BITS,    // Default: 5 (32 entries, 128KB max)
     parameter integer N_NVME_BITS     = lynxTypes::N_NVME_BITS,      // Default: 2 (4 devices)
+    parameter integer NUM_DEVICES     = lynxTypes::NVME_NUM_DEVICES, // Instantiated devices
     parameter integer PRP_AXI_OFFSET  = 0                             // BD residual offset (0 when base is EXT_ADDR_WIDTH-aligned)
 )(
     input  logic        aclk,
@@ -52,6 +53,8 @@ module nvme_prp_ctrl #(
     // Derived Parameters
     // Internal BRAM address: {dev_id, queue_idx, prp_entry}
     localparam integer unsigned ADDR_BITS = N_NVME_BITS + NVME_QUEUE_BITS + PRP_ADDR_BITS;
+    // RAM depth
+    localparam integer unsigned RAM_BITS  = NVME_QUEUE_BITS + PRP_ADDR_BITS + ((NUM_DEVICES > 1) ? $clog2(NUM_DEVICES) : 0);
 
     // AXI BRAM Controller (DATA_WIDTH=64) outputs byte addresses
     // Each AXI word = 8 bytes → byte offset bits = log2(8) = 3
@@ -211,16 +214,16 @@ module nvme_prp_ctrl #(
 
     // Dual-port BRAM (1-cycle read latency)
     ram_sdp_nc #(
-        .ADDR_BITS (ADDR_BITS),
+        .ADDR_BITS (RAM_BITS),
         .DATA_BITS (64)
     ) inst_nvme_prp_bram (
         .clk        (aclk),
         .a_en       (a_en),
         .a_we       (a_we),
-        .a_addr     (a_addr),
+        .a_addr     (a_addr[RAM_BITS-1:0]),
         .a_data_in  (a_data_in),
         .b_en       (bram_en_a),
-        .b_addr     (b_addr),
+        .b_addr     (b_addr[RAM_BITS-1:0]),
         .b_data_out (b_data_out)
     );
 

@@ -29,7 +29,6 @@
 
 #include <thread>
 #include <chrono>
-#include <cstring>
 #include <string>
 #include <random>
 #include <fstream>
@@ -431,6 +430,8 @@ protected:
 	 * range is then accessible from this cThread's region via NVMe SQEs issued by the
 	 * vFPGA user logic.
 	 *
+	 * Requires CAP_SYS_ADMIN; one range per device and region.
+	 *
 	 * @param bdf  PCI BDF string for HOST-connected NVMe; ignored for PL-connected NVMe
 	 * @param nsid Namespace identifier for HOST-connected NVMe; PL currently requires 1
 	 * @param size Requested allocation size in bytes
@@ -440,18 +441,21 @@ protected:
 
 	/**
 	 * @brief Release the LBA range previously claimed by initNVMe for this region
+	 *
+	 * Revokes the region's permission for the device. Requires CAP_SYS_ADMIN.
+	 *
 	 * @param dev_id FPGA dev_id returned by initNVMe
 	 */
 	void closeNVMe(uint32_t dev_id);
 
 	/**
-	 * @brief Test whether an NVMe device matching (bdf, nsid) is already registered to this region
+	 * @brief Test whether an NVMe device matching (bdf, nsid) is registered to this region
 	 *
 	 * Populates the output fields of the returned nvmeInitIoctl when result == 0.
 	 *
-	 * @param bdf  PCI BDF string of the NVMe device
+	 * @param bdf  PCI BDF string for HOST-connected NVMe; ignored for PL-connected NVMe
 	 * @param nsid Namespace identifier
-	 * @return Populated nvmeInitIoctl with result == 0 when registered, negative errno otherwise
+	 * @return Populated nvmeInitIoctl with result == 0 when registered, result == -ENOENT otherwise
 	 */
 	nvmeInitIoctl isNVMeRegistered(const std::string& bdf, uint32_t nsid);
 

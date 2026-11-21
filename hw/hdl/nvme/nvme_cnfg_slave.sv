@@ -182,7 +182,7 @@ module nvme_cnfg_slave (
                         end
 
                         // Trigger device info update
-                        if (s_nvme_cnfg.wdata[0]) begin
+                        if (s_nvme_cnfg.wstrb[0] && s_nvme_cnfg.wdata[0]) begin
                             m_update_tbl.data.dev_id      <= ctrl_reg[DEV_ID][N_NVME_BITS-1:0];
                             m_update_tbl.data.nsid        <= ctrl_reg[NSID][NSID_BITS-1:0];
                             m_update_tbl.data.lbaf        <= ctrl_reg[LBAF][LBAF_BITS-1:0];
@@ -202,7 +202,7 @@ module nvme_cnfg_slave (
                         end
 
                         // Trigger permission update
-                        if (s_nvme_cnfg.wdata[0] || s_nvme_cnfg.wdata[1]) begin
+                        if (s_nvme_cnfg.wstrb[0] && (s_nvme_cnfg.wdata[0] || s_nvme_cnfg.wdata[1])) begin
                             m_perm_update.data.region_id  <= ctrl_reg[PERM_REGION_ID][REGION_ID_BITS-1:0];
                             m_perm_update.data.dev_id     <= ctrl_reg[PERM_DEV_ID][N_NVME_BITS-1:0];
                             m_perm_update.data.lba_offset <= ctrl_reg[PERM_LBA_OFFSET][63:0];
@@ -228,8 +228,8 @@ module nvme_cnfg_slave (
             axi_rdata <= '0;
         end
         else begin
-            axi_rdata <= '0;
             if (ctrl_reg_rden) begin
+                axi_rdata <= '0;
 `ifdef EN_NVME_PL
                 case (axi_araddr[ADDR_LSB+:ADDR_MSB])
                     PL_STATUS: begin

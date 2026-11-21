@@ -176,6 +176,19 @@ int read_shell_config(struct bus_driver_data *data) {
     return ret_val;
 }
 
+void free_nvme_resources(struct bus_driver_data *data) {
+    if (!data->nvme_mgr && !data->nvme_cnfg_regs) {
+        return;
+    }
+
+    nvme_mgr_free(data);
+    if (data->nvme_cnfg_regs) {
+        iounmap((void *) data->nvme_cnfg_regs);
+        data->nvme_cnfg_regs = NULL;
+    }
+    dbg_info("NVMe manager released\n");
+}
+
 ////////////////////////////////////////////////
 //      CARD MEMORY RESOURCES & SPIN LOCKS    //  
 ////////////////////////////////////////////////   

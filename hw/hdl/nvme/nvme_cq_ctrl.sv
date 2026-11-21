@@ -55,6 +55,8 @@ module nvme_cq_ctrl #(
     localparam int unsigned CQ_DEPTH     = (1 << CQ_ADDR_BITS);
     localparam int unsigned N_NVME       = NUM_DEVICES;
     localparam int unsigned CQ_TOTAL_BITS = CQ_ADDR_BITS + N_NVME_BITS;
+    // RAM depth
+    localparam int unsigned CQ_RAM_BITS  = CQ_ADDR_BITS + ((NUM_DEVICES > 1) ? $clog2(NUM_DEVICES) : 0);
     // The AXI controller exposes a fixed 4-KiB aperture per device.
     localparam int unsigned CQ_BYTE_BITS = N_NVME_BITS + 12;
 
@@ -186,10 +188,10 @@ module nvme_cq_ctrl #(
     assign a_addr = {wr_dev_id, wr_slot};
     assign a_data_in = bram_wrdata_a[127:64];
 
-    ram_tp_c #(.ADDR_BITS(CQ_TOTAL_BITS), .DATA_BITS(64)) inst_cq_table (
-        .clk(aclk), .a_en(a_en), .a_we(a_we), .a_addr(a_addr),
+    ram_tp_c #(.ADDR_BITS(CQ_RAM_BITS), .DATA_BITS(64)) inst_cq_table (
+        .clk(aclk), .a_en(a_en), .a_we(a_we), .a_addr(a_addr[CQ_RAM_BITS-1:0]),
         .a_data_in(a_data_in), .a_data_out(a_data_out),
-        .b_en(1'b1), .b_addr(b_addr), .b_data_out(b_data_out)
+        .b_en(1'b1), .b_addr(b_addr[CQ_RAM_BITS-1:0]), .b_data_out(b_data_out)
     );
 
     // Preserve the historical last-CQE AXI debug readback layout. Full CID

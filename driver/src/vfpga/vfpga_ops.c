@@ -90,6 +90,9 @@ int vfpga_dev_release(struct inode *inode, struct file *file) {
                 }
             }
         }
+
+        // Release the NVMe LBA ranges of this vFPGA
+        vfpga_nvme_release_region(device);
     }
     
     int minor = iminor(inode);
@@ -660,10 +663,14 @@ long vfpga_dev_ioctl_impl(struct vfpga_dev *device, unsigned int command, unsign
                 pr_warn("NVMe init args could not be copied, return %d\n", ret_val);
                 break;
             }
+            nvme_req.bdf[sizeof(nvme_req.bdf) - 1] = '\0';
             dbg_info("vFPGA device %d issuing NVMe init for bdf=%s nsid=%u size=%llu\n",
                      device->id, nvme_req.bdf, nvme_req.nsid, nvme_req.size);
             ret_val = vfpga_nvme_init(device, &nvme_req);
             if (ret_val == 0) {
+                if (nvme_req.result == 0) {
+                    nvme_req.queue_depth = device->bd_data->nvme_queue_depth;
+                }
                 if (from_kernel) {
                     memcpy((void *) arg, &nvme_req, sizeof(nvme_req));
                 } else if (copy_to_user((void __user *) arg, &nvme_req, sizeof(nvme_req)) != 0) {
@@ -689,7 +696,7 @@ long vfpga_dev_ioctl_impl(struct vfpga_dev *device, unsigned int command, unsign
                 pr_warn("NVMe close arg could not be copied, return %d\n", ret_val);
                 break;
             }
-            dbg_info("vFPGA device %d releasing NVMe device id %lu\n", device->id, tmp[0]);
+            dbg_info("vFPGA device %d releasing NVMe device id %llu\n", device->id, tmp[0]);
             ret_val = vfpga_nvme_close(device, (uint32_t) tmp[0]);
             break;
 
@@ -709,8 +716,12 @@ long vfpga_dev_ioctl_impl(struct vfpga_dev *device, unsigned int command, unsign
                 pr_warn("NVMe is_registered args could not be copied, return %d\n", ret_val);
                 break;
             }
+            nvme_req.bdf[sizeof(nvme_req.bdf) - 1] = '\0';
             ret_val = vfpga_nvme_is_registered(device, &nvme_req);
             if (ret_val == 0) {
+                if (nvme_req.result == 0) {
+                    nvme_req.queue_depth = device->bd_data->nvme_queue_depth;
+                }
                 if (from_kernel) {
                     memcpy((void *) arg, &nvme_req, sizeof(nvme_req));
                 } else if (copy_to_user((void __user *) arg, &nvme_req, sizeof(nvme_req)) != 0) {

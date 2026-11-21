@@ -57,7 +57,8 @@ enum class BenchmarkRegisters : uint32_t {
     DEV_MASK_REG        = 8,    // WR: per-device participation mask
     NSID_REG            = 9,    // WR: NVMe namespace ID
     MAX_OUTSTANDING_REG = 10,   // WR: max in-flight commands per device
-    ERROR_REG           = 11    // RO: last error code on cq_rsp (sticky until next CTRL pulse)
+    ERROR_REG           = 11,   // RO: last error code on cq_rsp (sticky until next CTRL pulse)
+    PID_REG             = 12    // WR: Coyote thread ID of the buffer
 };
 
 // 01 written to CTRL_REG starts a read operation and 10 written to CTRL starts a write
@@ -106,7 +107,7 @@ static std::string formatBW(double bytes_per_sec) {
 
 // Run one benchmark pass and report the aggregated bandwidth
 static void run_bench(
-    coyote::cThread& coyote_thread, void* buf, uint64_t total_size_per_dev,
+    coyote::cThread& coyote_thread, void* buf,
     uint64_t chunk_size, uint32_t n_reps, uint16_t dev_mask, uint32_t n_active_devs,
     uint32_t max_outstanding, BenchmarkOperation oper, const std::string& tag
 ) {
@@ -119,6 +120,7 @@ static void run_bench(
     coyote_thread.setCSR(dev_mask,                         static_cast<uint32_t>(BenchmarkRegisters::DEV_MASK_REG));
     coyote_thread.setCSR(DEFAULT_NSID,                     static_cast<uint32_t>(BenchmarkRegisters::NSID_REG));
     coyote_thread.setCSR(max_outstanding,                  static_cast<uint32_t>(BenchmarkRegisters::MAX_OUTSTANDING_REG));
+    coyote_thread.setCSR(coyote_thread.getCtid(),          static_cast<uint32_t>(BenchmarkRegisters::PID_REG));
     coyote_thread.setCSR(static_cast<uint64_t>(oper),      static_cast<uint32_t>(BenchmarkRegisters::CTRL_REG));
 
     while (coyote_thread.getCSR(static_cast<uint32_t>(BenchmarkRegisters::DONE_REG)) < expected) {}
@@ -126,13 +128,13 @@ static void run_bench(
     const uint64_t cycles      = coyote_thread.getCSR(static_cast<uint32_t>(BenchmarkRegisters::TIMER_REG));
     const uint16_t err         = coyote_thread.getCSR(static_cast<uint32_t>(BenchmarkRegisters::ERROR_REG)) & 0xFFFF;
     const double   seconds     = (double) cycles * (double) CLOCK_PERIOD_NS * 1e-9;
-    const uint64_t total_bytes = total_size_per_dev * n_active_devs;
+    const uint64_t total_bytes = (uint64_t) n_reps * chunk_size * n_active_devs;
     const double   agg_bw      = (double) total_bytes / seconds;
 
     std::cout << std::setw(10) << tag
               << " | chunk=" << std::setw(8) << formatSize(chunk_size)
               << " | mask=0x" << std::hex << dev_mask << std::dec
-              << " | "       << std::setw(11) << formatBW(agg_bw)
+              << " | "       << std::setw(11) << (err ? std::string("FAILED") : formatBW(agg_bw))
               << " | "       << cycles << " cycles"
               << " | err=0x" << std::hex << err << std::dec
               << std::endl;
@@ -154,7 +156,7 @@ int main(int argc, char* argv[]) {
     namespace po = boost::program_options;
     po::options_description runtime_options("Coyote Perf NVMe Options");
     runtime_options.add_options()
-        ("bdf,b",         po::value<std::vector<std::string>>(&bdfs)->required()->multitoken(), "NVMe PCI BDF (repeat for multi-device)")
+        ("bdf,b",         po::value<std::vector<std::string>>(&bdfs)->multitoken(),             "NVMe PCI BDF (repeat for multi-device); optional for a PL-connected SSD")
         ("total,t",       po::value<std::string>(&total_str)->default_value("64M"),             "Total transfer per device (suffixes: K/M/G)")
         ("chunk,c",       po::value<std::string>(&chunk_str)->default_value("4K"),              "Chunk size per command")
         ("alloc,a",       po::value<std::string>(&alloc_str)->default_value(""),                "NVMe allocation per device (default: total)")
@@ -173,8 +175,21 @@ int main(int argc, char* argv[]) {
     const uint64_t chunk_size = parseSize(chunk_str);
     const uint64_t alloc_size = alloc_str.empty() ? total_size : parseSize(alloc_str);
 
-    if (max_outstanding == 0 || max_outstanding > 1024) {
-        throw std::runtime_error("max_outstanding must be in (0, 1024]");
+    if (max_outstanding == 0) {
+        throw std::runtime_error("max_outstanding must be at least 1");
+    }
+
+    // PL-connected SSD: one device, no BDF
+    if (bdfs.empty()) {
+        bdfs.push_back("");
+    }
+
+    // getMem takes a 32-bit size
+    if (total_size > UINT32_MAX) {
+        throw std::runtime_error(
+            "--total " + formatSize(total_size) + " is too large; the buffer size must not exceed " +
+            std::to_string(UINT32_MAX) + " bytes (4 GB - 1)"
+        );
     }
 
     const bool do_read  = !write_only;
@@ -208,6 +223,19 @@ int main(int argc, char* argv[]) {
                   << "  mdts=" << dev.mdts << std::endl;
     }
     std::cout << "DEV_MASK:    0x" << std::hex << dev_mask << std::dec << std::endl;
+    const uint32_t n_active_devs = (uint32_t) __builtin_popcount(dev_mask);
+
+    // The shell queues at most queue_depth - 1 commands per device
+    for (const auto& dev : devs) {
+        if (max_outstanding > dev.queue_depth - 1) {
+            for (const auto& d : devs) { coyote_thread.closeNVMe(d.dev_id); }
+            throw std::runtime_error(
+                "max_outstanding " + std::to_string(max_outstanding) +
+                " exceeds NVME_QUEUE_DEPTH - 1 = " + std::to_string(dev.queue_depth - 1) +
+                " for dev " + std::to_string(dev.dev_id)
+            );
+        }
+    }
 
     // Clamp the chunk to min(MDTS, PRP_CAP). No FPGA-side splitter: one user request maps
     // 1:1 to one NVMe command, whose PRP covers at most 33 pages (~128 KB).
@@ -247,7 +275,6 @@ int main(int argc, char* argv[]) {
     // With --fpga-mem, offload the buffer to FPGA HBM. This re-maps the TLB so the buffer's physical
     // pages now live in card memory; the NVMe PRP entries then reference HBM and the SSD DMAs straight
     // to/from HBM (peer-to-peer) instead of host DRAM. Offload is chunked at the Coyote 128 MB limit.
-    constexpr uint64_t OFFLOAD_MAX = 128ULL * 1024 * 1024;
     if (use_fpga_mem) {
         std::cout << "Offloading " << formatSize(total_size) << " to FPGA HBM..." << std::endl;
         for (uint64_t off = 0; off < total_size; off += OFFLOAD_MAX) {
@@ -262,14 +289,14 @@ int main(int argc, char* argv[]) {
     for (const auto& dev : devs) {
         const uint16_t single_mask = (uint16_t)(1u << dev.dev_id);
         std::cout << "--- dev_id=" << dev.dev_id << " ---" << std::endl;
-        if (do_write) run_bench(coyote_thread, buf, total_size, actual_chunk, n_reps, single_mask, 1, max_outstanding, BenchmarkOperation::START_WR, "WRITE");
-        if (do_read)  run_bench(coyote_thread, buf, total_size, actual_chunk, n_reps, single_mask, 1, max_outstanding, BenchmarkOperation::START_RD, "READ");
+        if (do_write) run_bench(coyote_thread, buf, actual_chunk, n_reps, single_mask, 1, max_outstanding, BenchmarkOperation::START_WR, "WRITE");
+        if (do_read)  run_bench(coyote_thread, buf, actual_chunk, n_reps, single_mask, 1, max_outstanding, BenchmarkOperation::START_RD, "READ");
     }
 
     // Aggregate sweep
     HEADER("ALL DEVICES TOGETHER");
-    if (do_write) run_bench(coyote_thread, buf, total_size, actual_chunk, n_reps, dev_mask, (uint32_t)devs.size(), max_outstanding, BenchmarkOperation::START_WR, "WRITE");
-    if (do_read)  run_bench(coyote_thread, buf, total_size, actual_chunk, n_reps, dev_mask, (uint32_t)devs.size(), max_outstanding, BenchmarkOperation::START_RD, "READ");
+    if (do_write) run_bench(coyote_thread, buf, actual_chunk, n_reps, dev_mask, n_active_devs, max_outstanding, BenchmarkOperation::START_WR, "WRITE");
+    if (do_read)  run_bench(coyote_thread, buf, actual_chunk, n_reps, dev_mask, n_active_devs, max_outstanding, BenchmarkOperation::START_RD, "READ");
 
     // Data Integrity Verification (--verify): write pattern -> clear -> read -> memcmp.
     if (do_verify) {
@@ -288,8 +315,8 @@ int main(int argc, char* argv[]) {
         std::cout << "OK" << std::endl;
 
         std::cout << "2. NVMe WRITE to SSD..." << std::endl;
-        run_bench(coyote_thread, buf, total_size, actual_chunk, n_reps, dev_mask,
-                  (uint32_t)devs.size(), max_outstanding, BenchmarkOperation::START_WR, "VERIFY-WR");
+        run_bench(coyote_thread, buf, actual_chunk, n_reps, dev_mask,
+                  n_active_devs, max_outstanding, BenchmarkOperation::START_WR, "VERIFY-WR");
 
         std::cout << "3. Clear host buffer... " << std::flush;
         std::memset(host_buf, 0x00, total_size);
@@ -303,8 +330,8 @@ int main(int argc, char* argv[]) {
         std::cout << "OK" << std::endl;
 
         std::cout << "4. NVMe READ from SSD..." << std::endl;
-        run_bench(coyote_thread, buf, total_size, actual_chunk, n_reps, dev_mask,
-                  (uint32_t)devs.size(), max_outstanding, BenchmarkOperation::START_RD, "VERIFY-RD");
+        run_bench(coyote_thread, buf, actual_chunk, n_reps, dev_mask,
+                  n_active_devs, max_outstanding, BenchmarkOperation::START_RD, "VERIFY-RD");
 
         if (use_fpga_mem) {
             std::cout << "5. Sync HBM -> host... " << std::flush;
