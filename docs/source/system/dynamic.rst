@@ -127,8 +127,8 @@ A typical configuration for two host-attached SSDs on the U55C:
 The SSD sits in a PCIe slot of the host and must not be bound to any kernel driver.
 Its I/O queues live in FPGA BRAM, and the SSD and the FPGA exchange commands, completions and data with PCIe peer-to-peer transactions, so the host must allow peer-to-peer traffic, with the IOMMU off or in passthrough mode.
 The shipped static layers have a 256 MB shell BAR, which only allows buffers in host memory.
-On the U55C/U280, the shell can map card memory into a 16 GB bypass BAR for buffers in card memory; this requires rebuilding the static layer with ``-DBUILD_STATIC=1 -DBUILD_SHELL=0``.
-On the V80, host-attached SSDs use buffers in host memory only.
+For buffers in card memory, the shell maps card memory into an enlarged shell BAR (16 GB on the U55C/U280, 32 GB on the V80); this requires rebuilding the static layer with ``-DBUILD_STATIC=1 -DBUILD_SHELL=0``.
+On the V80, the SSD reaches the first 31.75 GB of HBM.
 
 **PL-attached SSDs (NVME_TYPE = PL)**
 On the V80, the SSD can be connected to an MCIO port, with the FPGA acting as the PCIe root complex.

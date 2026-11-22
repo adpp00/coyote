@@ -167,6 +167,9 @@ set_property(CACHE NVME_TYPE PROPERTY STRINGS HOST PL)
 set(NVME_QUEUE_DEPTH 64 CACHE STRING "NVMe I/O queue entries (64, 128, or 256); admin queues remain 64")
 set_property(CACHE NVME_QUEUE_DEPTH PROPERTY STRINGS 64 128 256)
 set(NVME_NUM_DEVICES 1 CACHE STRING "Number of NVMe device slots instantiated in the shell (HOST: 1..16, PL: 1); device IDs remain 4 bits")
+# NVMe card memory channels (more than one: Versal with HBM_IMPL=unified)
+set(NVME_NUM_MEM_CHAN 1 CACHE STRING "Memory channels of the NVMe card memory path (1, 2, 4 or 8)")
+set_property(CACHE NVME_NUM_MEM_CHAN PROPERTY STRINGS 1 2 4 8)
 
 ##
 ## RECONFIGURATION
@@ -821,6 +824,9 @@ macro(validation_checks_hw)
     if(NOT NVME_NUM_DEVICES MATCHES "^([1-9]|1[0-6])$")
         message(FATAL_ERROR "NVME_NUM_DEVICES must be an integer from 1 to 16")
     endif()
+    if(NOT NVME_NUM_MEM_CHAN MATCHES "^(1|2|4|8)$")
+        message(FATAL_ERROR "NVME_NUM_MEM_CHAN must be 1, 2, 4 or 8")
+    endif()
 
     # NVMe connection type. Keep the derived flags disabled when NVMe itself is disabled.
     # EN_NVME_CARD: SSD DMA into card memory
@@ -837,11 +843,11 @@ macro(validation_checks_hw)
                 message(FATAL_ERROR "NVME_TYPE=HOST requires EN_STRM=1: the SSD doorbells are written through the host DMA.")
             endif()
             if(EN_MEM)
-                # Card memory in the 16 GB bypass BAR
-                if(FDEV_NAME STREQUAL "u55c" OR FDEV_NAME STREQUAL "u280")
+                # Card memory in the enlarged static BAR
+                if(FDEV_NAME STREQUAL "u55c" OR FDEV_NAME STREQUAL "u280" OR (FDEV_NAME STREQUAL "v80" AND HBM_IMPL STREQUAL "unified"))
                     set(EN_NVME_CARD 1)
                 else()
-                    message(WARNING "NVME_TYPE=HOST on ${FDEV_NAME}: the bypass BAR does not cover card memory, so NVMe transfers must use host memory buffers.")
+                    message(WARNING "NVME_TYPE=HOST on ${FDEV_NAME}: the FPGA BAR does not cover card memory (on the v80, HBM_IMPL must be unified), so NVMe transfers must use host memory buffers.")
                 endif()
             endif()
             set(EN_NVME_HOST 1)
@@ -863,9 +869,13 @@ macro(validation_checks_hw)
             message(FATAL_ERROR "Invalid NVME_TYPE='${NVME_TYPE}'. Expected HOST or PL.")
         endif()
 
+        if(EN_NVME_CARD AND (NVME_NUM_MEM_CHAN GREATER 1) AND NOT (FPGA_ARCH STREQUAL "versal" AND HBM_IMPL STREQUAL "unified"))
+            message(FATAL_ERROR "NVME_NUM_MEM_CHAN > 1 is supported only on Versal devices with HBM_IMPL=unified.")
+        endif()
+
         if(EN_NVME_CARD AND (BUILD_SHELL OR BUILD_STATIC))
-            # Top memory channel for the SSD
-            MATH(EXPR N_MEM_CHAN "${N_MEM_CHAN} + 1")
+            # Top NVME_NUM_MEM_CHAN memory channels for the SSD
+            MATH(EXPR N_MEM_CHAN "${N_MEM_CHAN} + ${NVME_NUM_MEM_CHAN}")
         endif()
     endif()
 

@@ -378,6 +378,29 @@ proc cr_bd_design_static { parentCell } {
     exit 1
   }
 
+  # BAR4 with NVMe card memory
+  set nvme_pl_axi [expr {$cnfg(en_nvme_host) eq 1 && $cnfg(en_nvme_card) eq 1 && $cnfg(pcie_gen) eq 5}]
+  if {$cnfg(en_nvme_host) eq 1 && $cnfg(en_nvme_card) eq 1} {
+    set cpm_pcie [expr {$cnfg(pcie_gen) eq 5 ? "CPM_PCIE1" : "CPM_PCIE0"}]
+    set_property CONFIG.CPM_CONFIG [dict merge [get_property CONFIG.CPM_CONFIG $versal_cips_0] \
+      [list ${cpm_pcie}_PF0_BAR4_QDMA_SCALE Gigabytes ${cpm_pcie}_PF0_BAR4_QDMA_SIZE 32 ${cpm_pcie}_PF0_BAR4_QDMA_AXCACHE 1]] $versal_cips_0
+    set main_range 32G
+    set main_aperture 32G
+    set main_bw 6400
+    set main_burst 64
+    if {$nvme_pl_axi} {
+      set_property CONFIG.CPM_CONFIG [dict merge [get_property CONFIG.CPM_CONFIG $versal_cips_0] \
+        [list CPM_PCIE1_PF0_BAR4_QDMA_STEERING CPM_PL_AXI0 CPM_PL_AXI0_EN 1]] $versal_cips_0
+      set main_bw 8
+      set main_burst 4
+    }
+  } else {
+    set main_range 256M
+    set main_aperture 1G
+    set main_bw 8
+    set main_burst 4
+  }
+
   # AXI NoC
   # The NoC is used to route AXI-MM interfaces from the QDMA to the shell
   # Additionally, it will perform clock-domain crossing, reducing the frequency from 1000 MHz to shell frequency
@@ -397,7 +420,7 @@ proc cr_bd_design_static { parentCell } {
   ] [get_bd_intf_pins /axi_noc_0/M00_AXI]
 
   set_property -dict [ list \
-    CONFIG.APERTURES {{0x208_0000_0000 1G}} \
+    CONFIG.APERTURES [list [list 0x208_0000_0000 $main_aperture]] \
     CONFIG.CATEGORY {pl} \
   ] [get_bd_intf_pins /axi_noc_0/M01_AXI]
 
@@ -418,7 +441,7 @@ proc cr_bd_design_static { parentCell } {
 
   # CPM_PCIE_NOC_0 is used for shell and static layer registers
   set_property -dict [ list \
-    CONFIG.CONNECTIONS {M00_AXI {read_bw {8} write_bw {8} read_avg_burst {4} write_avg_burst {4}} M01_AXI {read_bw {8} write_bw {8} read_avg_burst {4} write_avg_burst {4}}} \
+    CONFIG.CONNECTIONS [format {M00_AXI {read_bw {8} write_bw {8} read_avg_burst {4} write_avg_burst {4}} M01_AXI {read_bw {%d} write_bw {%d} read_avg_burst {%d} write_avg_burst {%d}}} $main_bw $main_bw $main_burst $main_burst] \
     CONFIG.DEST_IDS {M01_AXI:0x0:M00_AXI:0x40} \
     CONFIG.NOC_PARAMS {} \
     CONFIG.CATEGORY {ps_pcie} \
@@ -553,6 +576,21 @@ proc cr_bd_design_static { parentCell } {
   connect_bd_intf_net [get_bd_intf_pins axi_reg_slice_1/M_AXI] [get_bd_intf_pins smartconnect_1/S00_AXI]
   connect_bd_intf_net [get_bd_intf_ports axi_main] [get_bd_intf_pins smartconnect_1/M00_AXI]
 
+  # BAR4 from the CPM PL AXI master --- axi_main_pl
+  if {$nvme_pl_axi} {
+    set axi_main_pl [ create_bd_intf_port -mode Master -vlnv xilinx.com:interface:aximm_rtl:1.0 axi_main_pl ]
+    set_property -dict [ list \
+      CONFIG.ADDR_WIDTH {64} \
+      CONFIG.DATA_WIDTH {512} \
+      CONFIG.PROTOCOL {AXI4} \
+      CONFIG.NUM_READ_OUTSTANDING {32} \
+      CONFIG.NUM_WRITE_OUTSTANDING {32} \
+    ] $axi_main_pl
+    connect_bd_intf_net [get_bd_intf_pins versal_cips_0/CPM_PL_AXI0] $axi_main_pl
+    connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] [get_bd_pins versal_cips_0/cpm_pl_axi0_clk]
+    set_property CONFIG.ASSOCIATED_BUSIF {m_axis_h2c:s_axis_c2h:axi_cnfg:axi_main:axi_debug_hub:axi_main_pl} $xclk
+  }
+
   # Static config --- axi_cnfg (register slice -> smartconnect for protocol conversion)
   connect_bd_intf_net [get_bd_intf_pins axi_noc_0/M00_AXI] [get_bd_intf_pins axi_reg_slice_0/S_AXI]
   connect_bd_intf_net [get_bd_intf_pins axi_reg_slice_0/M_AXI] [get_bd_intf_pins smartconnect_0/S00_AXI]
@@ -665,7 +703,10 @@ proc cr_bd_design_static { parentCell } {
 ########################################################################################################
   # Shell & static config
   assign_bd_address -offset 0x020100000000 -range 1M -target_address_space [get_bd_addr_spaces versal_cips_0/CPM_PCIE_NOC_0] [get_bd_addr_segs axi_cnfg/Reg] -force
-  assign_bd_address -offset 0x020800000000 -range 256M -target_address_space [get_bd_addr_spaces versal_cips_0/CPM_PCIE_NOC_0] [get_bd_addr_segs axi_main/Reg] -force
+  assign_bd_address -offset 0x020800000000 -range $main_range -target_address_space [get_bd_addr_spaces versal_cips_0/CPM_PCIE_NOC_0] [get_bd_addr_segs axi_main/Reg] -force
+  if {$nvme_pl_axi} {
+    assign_bd_address -offset 0x020800000000 -range $main_range -target_address_space [get_bd_addr_spaces versal_cips_0/CPM_PL_AXI0] [get_bd_addr_segs axi_main_pl/Reg] -force
+  }
   
   # PR control (SBI CSR) --- currently unused
   # assign_bd_address -offset 0x000101220000 -range 64K -target_address_space [get_bd_addr_spaces versal_cips_0/CPM_PCIE_NOC_1] [get_bd_addr_segs versal_cips_0/NOC_PMC_AXI_0/pspmc_0_psv_pmc_slave_boot] -force

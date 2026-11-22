@@ -73,7 +73,11 @@
 #define NVME_SQ_SIZE        0x4000UL
 #define NVME_CQ_BASE        0x04020000UL    /* CQ BRAM, 4 KB per device */
 #define NVME_CQ_SIZE        0x1000UL
+#ifdef PLATFORM_VERSAL
+#define NVME_CARD_WIN_END   0x800000000ULL  /* End of the card memory window, 32 GB BAR */
+#else
 #define NVME_CARD_WIN_END   0x400000000ULL  /* End of the card memory window, 16 GB BAR */
+#endif
 
 /* Highest NSID the FPGA can address (4-bit nsid) */
 #define NVME_MAX_NSID           15
@@ -332,6 +336,10 @@ static int nvme_open_pci(struct nvme_dev_ctx *ctx, const char *bdf) {
     pci_set_master(pdev);
     /* Admin queue is polled, no INTx */
     pci_intx(pdev, 0);
+    /* Read requests of at least 512 bytes */
+    if (pcie_get_readrq(pdev) < 512) {
+        pcie_set_readrq(pdev, 512);
+    }
 
     ret = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
     if (ret) {

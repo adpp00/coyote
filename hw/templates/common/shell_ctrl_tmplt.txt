@@ -69,6 +69,15 @@ module shell_ctrl_cc (
     input  logic        sys_reset
 );
 
+{% if cnfg.en_nvme_host and cnfg.en_nvme_card %}
+// NVMe card window
+logic [AXI_ADDR_BITS-1:0] axi_card_mem_araddr;
+logic [AXI_ADDR_BITS-1:0] axi_card_mem_awaddr;
+
+assign axi_card_mem.araddr = axi_card_mem_araddr - NVME_CARD_WIN_BASE + NVME_CARD_MEM_BASE;
+assign axi_card_mem.awaddr = axi_card_mem_awaddr - NVME_CARD_WIN_BASE + NVME_CARD_MEM_BASE;
+
+{% endif %}
 // NOTE: The AXI SmartConnect IP (for Versal devices) doesn't generate/accept the arregion/awregion signals
 // Therefore, these signals are left disconnected when targeting Versal platforms
 // We don't really use them in Coyote, so it's fine (for now...)
@@ -316,36 +325,48 @@ design_ctrl inst_design_ctrl (
     .axi_nvme_cq_wstrb(axi_nvme_cq.wstrb),
     .axi_nvme_cq_wvalid(axi_nvme_cq.wvalid),
     {% if cnfg.en_nvme_card %}
-    .axi_card_mem_araddr(axi_card_mem.araddr),
+    .axi_card_mem_araddr(axi_card_mem_araddr),
     .axi_card_mem_arburst(axi_card_mem.arburst),
     .axi_card_mem_arcache(axi_card_mem.arcache),
+    {% if cnfg.fpga_arch == 'ultrascale_plus' %}
     .axi_card_mem_arid(axi_card_mem.arid),
+    {% endif %}
     .axi_card_mem_arlen(axi_card_mem.arlen),
     .axi_card_mem_arlock(axi_card_mem.arlock),
     .axi_card_mem_arprot(axi_card_mem.arprot),
     .axi_card_mem_arqos(axi_card_mem.arqos),
+    {% if cnfg.fpga_arch == 'ultrascale_plus' %}
     .axi_card_mem_arregion(axi_card_mem.arregion),
+    {% endif %}
     .axi_card_mem_arready(axi_card_mem.arready),
     .axi_card_mem_arsize(axi_card_mem.arsize),
     .axi_card_mem_arvalid(axi_card_mem.arvalid),
-    .axi_card_mem_awaddr(axi_card_mem.awaddr),
+    .axi_card_mem_awaddr(axi_card_mem_awaddr),
     .axi_card_mem_awburst(axi_card_mem.awburst),
     .axi_card_mem_awcache(axi_card_mem.awcache),
+    {% if cnfg.fpga_arch == 'ultrascale_plus' %}
     .axi_card_mem_awid(axi_card_mem.awid),
+    {% endif %}
     .axi_card_mem_awlen(axi_card_mem.awlen),
     .axi_card_mem_awlock(axi_card_mem.awlock),
     .axi_card_mem_awprot(axi_card_mem.awprot),
     .axi_card_mem_awqos(axi_card_mem.awqos),
+    {% if cnfg.fpga_arch == 'ultrascale_plus' %}
     .axi_card_mem_awregion(axi_card_mem.awregion),
+    {% endif %}
     .axi_card_mem_awready(axi_card_mem.awready),
     .axi_card_mem_awsize(axi_card_mem.awsize),
     .axi_card_mem_awvalid(axi_card_mem.awvalid),
+    {% if cnfg.fpga_arch == 'ultrascale_plus' %}
     .axi_card_mem_bid(axi_card_mem.bid),
+    {% endif %}
     .axi_card_mem_bready(axi_card_mem.bready),
     .axi_card_mem_bresp(axi_card_mem.bresp),
     .axi_card_mem_bvalid(axi_card_mem.bvalid),
     .axi_card_mem_rdata(axi_card_mem.rdata),
+    {% if cnfg.fpga_arch == 'ultrascale_plus' %}
     .axi_card_mem_rid(axi_card_mem.rid),
+    {% endif %}
     .axi_card_mem_rlast(axi_card_mem.rlast),
     .axi_card_mem_rready(axi_card_mem.rready),
     .axi_card_mem_rresp(axi_card_mem.rresp),
@@ -425,6 +446,12 @@ assign axi_nvme_sq.arid      = '0;
 assign axi_nvme_sq.awid      = '0;
 assign axi_nvme_sq.arregion  = '0;
 assign axi_nvme_sq.awregion  = '0;
+{% if cnfg.en_nvme_card %}
+assign axi_card_mem.arid     = '0;
+assign axi_card_mem.awid     = '0;
+assign axi_card_mem.arregion = '0;
+assign axi_card_mem.awregion = '0;
+{% endif %}
 {% endif %}
 
 {% endif %}

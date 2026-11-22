@@ -80,6 +80,11 @@ module static_top (
     AXI4 axi_main_int ();
     logic [AXI_ADDR_BITS-1:0] lsb_araddr;
     logic [AXI_ADDR_BITS-1:0] lsb_awaddr;
+{% if cnfg.en_nvme_host and cnfg.en_nvme_card and cnfg.pcie_gen == 5 %}
+    // BAR4 from the CPM PL AXI master
+    AXI4 #(.AXI4_ID_BITS(16)) axi_main_pl ();
+    AXI4 axi_main_noc ();
+{% endif %}
 
     // AXI data streams
     AXI4S axis_dyn_out_int [N_HCHAN] ();
@@ -240,6 +245,87 @@ module static_top (
         .axi_cnfg_wstrb(axi_cnfg.wstrb),
         .axi_cnfg_wvalid(axi_cnfg.wvalid),
 
+{% if cnfg.en_nvme_host and cnfg.en_nvme_card and cnfg.pcie_gen == 5 %}
+        // Shell configuration & control (unused)
+        .axi_main_araddr(axi_main_noc.araddr), 
+        .axi_main_arburst(axi_main_noc.arburst),
+        .axi_main_arcache(axi_main_noc.arcache),
+        //.axi_main_arid(axi_main_noc.arid),
+        .axi_main_arlen(axi_main_noc.arlen), 
+        .axi_main_arlock(axi_main_noc.arlock),
+        .axi_main_arprot(axi_main_noc.arprot),
+        .axi_main_arready(axi_main_noc.arready),
+        .axi_main_arsize(axi_main_noc.arsize),
+        .axi_main_arvalid(axi_main_noc.arvalid),
+        .axi_main_awaddr(axi_main_noc.awaddr),
+        .axi_main_awburst(axi_main_noc.awburst),
+        .axi_main_awcache(axi_main_noc.awcache),
+        //.axi_main_awid(axi_main_noc.awid),
+        .axi_main_awlen(axi_main_noc.awlen),
+        .axi_main_awlock(axi_main_noc.awlock),
+        .axi_main_awprot(axi_main_noc.awprot),
+        .axi_main_awready(axi_main_noc.awready),
+        .axi_main_awsize(axi_main_noc.awsize),
+        .axi_main_awvalid(axi_main_noc.awvalid),
+        .axi_main_bready(axi_main_noc.bready),
+        .axi_main_bresp(axi_main_noc.bresp),
+        //.axi_main_bid(axi_main_noc.bid),
+        .axi_main_bvalid(axi_main_noc.bvalid),
+        .axi_main_rdata(axi_main_noc.rdata),
+        //.axi_main_rid(axi_main_noc.rid),
+        .axi_main_rlast(axi_main_noc.rlast),
+        .axi_main_rready(axi_main_noc.rready),
+        .axi_main_rresp(axi_main_noc.rresp),
+        .axi_main_rvalid(axi_main_noc.rvalid),
+        .axi_main_wdata(axi_main_noc.wdata),
+        .axi_main_wlast(axi_main_noc.wlast),
+        .axi_main_wready(axi_main_noc.wready),
+        .axi_main_wstrb(axi_main_noc.wstrb),
+        .axi_main_wvalid(axi_main_noc.wvalid),
+
+        // Shell configuration & control (CPM PL AXI)
+        .axi_main_pl_araddr(lsb_araddr),
+        .axi_main_pl_arburst(axi_main_pl.arburst),
+        .axi_main_pl_arcache(axi_main_pl.arcache),
+        .axi_main_pl_arid(axi_main_pl.arid),
+        .axi_main_pl_arlen(axi_main_pl.arlen),
+        .axi_main_pl_arlock(axi_main_pl.arlock),
+        .axi_main_pl_arprot(axi_main_pl.arprot),
+        .axi_main_pl_arqos(axi_main_pl.arqos),
+        .axi_main_pl_arready(axi_main_pl.arready),
+        .axi_main_pl_arregion(axi_main_pl.arregion),
+        .axi_main_pl_arsize(axi_main_pl.arsize),
+        .axi_main_pl_arvalid(axi_main_pl.arvalid),
+        .axi_main_pl_awaddr(lsb_awaddr),
+        .axi_main_pl_awburst(axi_main_pl.awburst),
+        .axi_main_pl_awcache(axi_main_pl.awcache),
+        .axi_main_pl_awid(axi_main_pl.awid),
+        .axi_main_pl_awlen(axi_main_pl.awlen),
+        .axi_main_pl_awlock(axi_main_pl.awlock),
+        .axi_main_pl_awprot(axi_main_pl.awprot),
+        .axi_main_pl_awqos(axi_main_pl.awqos),
+        .axi_main_pl_awready(axi_main_pl.awready),
+        .axi_main_pl_awregion(axi_main_pl.awregion),
+        .axi_main_pl_awsize(axi_main_pl.awsize),
+        .axi_main_pl_awvalid(axi_main_pl.awvalid),
+        .axi_main_pl_bid(axi_main_pl.bid),
+        .axi_main_pl_bready(axi_main_pl.bready),
+        .axi_main_pl_bresp(axi_main_pl.bresp),
+        .axi_main_pl_bvalid(axi_main_pl.bvalid),
+        .axi_main_pl_rdata(axi_main_pl.rdata),
+        .axi_main_pl_rid(axi_main_pl.rid),
+        .axi_main_pl_rlast(axi_main_pl.rlast),
+        .axi_main_pl_rready(axi_main_pl.rready),
+        .axi_main_pl_rresp(axi_main_pl.rresp),
+        .axi_main_pl_rvalid(axi_main_pl.rvalid),
+        .axi_main_pl_wdata(axi_main_pl.wdata),
+        .axi_main_pl_wlast(axi_main_pl.wlast),
+        .axi_main_pl_wready(axi_main_pl.wready),
+        .axi_main_pl_wstrb(axi_main_pl.wstrb),
+        .axi_main_pl_wvalid(axi_main_pl.wvalid),
+        .axi_main_pl_buser(1'b0),
+        .axi_main_pl_ruser('0),
+{% else %}
         // Shell configuration & control
         .axi_main_araddr(lsb_araddr), 
         .axi_main_arburst(axi_main_int.arburst),
@@ -276,6 +362,7 @@ module static_top (
         .axi_main_wready(axi_main_int.wready),
         .axi_main_wstrb(axi_main_int.wstrb),
         .axi_main_wvalid(axi_main_int.wvalid),
+{% endif %}
 
         // AXI Debug Hub config
         .axi_debug_hub_araddr(m_axi_debug_hub.araddr), 
@@ -421,10 +508,27 @@ module static_top (
 
     // The NoC addresses are 64-bit long and start 0x201_0000_0000
     // Therefore, we keep the lower 28 bits and ignore the upper bits, as they are used for NoC routing
+{% if cnfg.en_nvme_host and cnfg.en_nvme_card and cnfg.pcie_gen == 5 %}
+    assign axi_main_pl.araddr[AXI_BPSS_BAR_BITS-1:0] = lsb_araddr[AXI_BPSS_BAR_BITS-1:0];
+    assign axi_main_pl.araddr[AXI_ADDR_BITS-1:AXI_BPSS_BAR_BITS] = 0;
+    assign axi_main_pl.awaddr[AXI_BPSS_BAR_BITS-1:0] = lsb_awaddr[AXI_BPSS_BAR_BITS-1:0];
+    assign axi_main_pl.awaddr[AXI_ADDR_BITS-1:AXI_BPSS_BAR_BITS] = 0;
+
+    always_comb axi_main_noc.tie_off_s();
+
+    // Single ID
+    nvme_pl_axi_order inst_axi_main_pl_order (
+        .aclk(xclk),
+        .aresetn(sresetn),
+        .s_axi(axi_main_pl),
+        .m_axi(axi_main_int)
+    );
+{% else %}
     assign axi_main_int.araddr[AXI_BPSS_BAR_BITS-1:0] = lsb_araddr[AXI_BPSS_BAR_BITS-1:0];
     assign axi_main_int.araddr[AXI_ADDR_BITS-1:AXI_BPSS_BAR_BITS] = 0;
     assign axi_main_int.awaddr[AXI_BPSS_BAR_BITS-1:0] = lsb_awaddr[AXI_BPSS_BAR_BITS-1:0];
     assign axi_main_int.awaddr[AXI_ADDR_BITS-1:AXI_BPSS_BAR_BITS] = 0;
+{% endif %}
 
     // ================-----------------------------------------------------------------
     // STATIC CONFIG 

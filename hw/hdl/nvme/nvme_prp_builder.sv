@@ -129,9 +129,19 @@ module nvme_prp_builder #(
 `ifdef EN_NVME_PL
         mmu_rsp_reachable = rsp.is_host || (NVME_CARD_FLOW != 0);
 `else
-        mmu_rsp_reachable = rsp.is_host || ((NVME_CARD_FLOW != 0) && CARD_WINDOW_EN);
+        mmu_rsp_reachable = rsp.is_host || ((NVME_CARD_FLOW != 0) && CARD_WINDOW_EN &&
+            ({{(64-PADDR_BITS){1'b0}}, rsp.paddr} - NVME_CARD_MEM_BASE) < NVME_CARD_WIN_SIZE);
 `endif
     endfunction
+
+`ifndef EN_NVME_PL
+    // Card window base
+    logic [63:0] card_bar_base;
+
+    always_ff @(posedge aclk) begin
+        card_bar_base <= FPGA_BAR_BASE + NVME_CARD_WIN_BASE - NVME_CARD_MEM_BASE;
+    end
+`endif
 
     // State machine
     typedef enum logic [3:0] {
@@ -240,7 +250,7 @@ module nvme_prp_builder #(
                         mmu_rsp_C.paddr, mmu_rsp_C.is_host);
 `else
                 if (mmu_rsp_C.is_host == 1'b0)
-                    prp_rsp_N.prp1 = mmu_rsp_C.paddr + FPGA_BAR_BASE;
+                    prp_rsp_N.prp1 = mmu_rsp_C.paddr + card_bar_base;
                 else
                     prp_rsp_N.prp1 = mmu_rsp_C.paddr;
 `endif
@@ -301,7 +311,7 @@ module nvme_prp_builder #(
                             s_nvme_mmu_rsp.data.is_host);
 `else
                         if (s_nvme_mmu_rsp.data.is_host == 1'b0)
-                            prp_rsp_N.prp2 = s_nvme_mmu_rsp.data.paddr + FPGA_BAR_BASE;
+                            prp_rsp_N.prp2 = s_nvme_mmu_rsp.data.paddr + card_bar_base;
                         else
                             prp_rsp_N.prp2 = s_nvme_mmu_rsp.data.paddr;
 `endif
@@ -336,7 +346,7 @@ module nvme_prp_builder #(
                             s_nvme_mmu_rsp.data.is_host);
 `else
                         if (s_nvme_mmu_rsp.data.is_host == 1'b0)
-                            prp_write_N.data = s_nvme_mmu_rsp.data.paddr + FPGA_BAR_BASE;
+                            prp_write_N.data = s_nvme_mmu_rsp.data.paddr + card_bar_base;
                         else
                             prp_write_N.data = s_nvme_mmu_rsp.data.paddr;
 `endif
@@ -403,7 +413,7 @@ module nvme_prp_builder #(
                             s_nvme_mmu_rsp.data.is_host);
 `else
                         if (s_nvme_mmu_rsp.data.is_host == 1'b0)
-                            prp_write_N.data = s_nvme_mmu_rsp.data.paddr + FPGA_BAR_BASE;
+                            prp_write_N.data = s_nvme_mmu_rsp.data.paddr + card_bar_base;
                         else
                             prp_write_N.data = s_nvme_mmu_rsp.data.paddr;
 `endif

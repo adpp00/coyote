@@ -172,11 +172,24 @@ package lynxTypes;
     localparam integer AXI_DDR_BITS = 512;
     localparam integer AXI_TLB_BITS = 128;
     localparam integer AXI_ID_BITS = 6;
-{% if cnfg.en_nvme_host and cnfg.en_nvme_card %}
+{% if cnfg.en_nvme_host and cnfg.en_nvme_card and cnfg.fpga_arch == 'versal' %}
+    // 32 GB BAR4 (NVMe card memory)
+    localparam integer AXI_BPSS_BAR_BITS = 35;
+{% elif cnfg.en_nvme_host and cnfg.en_nvme_card %}
     // 16 GB bypass BAR (NVMe card memory)
     localparam integer AXI_BPSS_BAR_BITS = 34;
 {% else %}
     localparam integer AXI_BPSS_BAR_BITS = 28;
+{% endif %}
+
+    // NVMe card window (MEM_START in coyote_defs.h)
+    localparam logic [63:0] NVME_CARD_WIN_BASE = 64'h0000_0000_1000_0000;
+{% if cnfg.fpga_arch == 'versal' %}
+    localparam logic [63:0] NVME_CARD_WIN_SIZE = 64'h0000_0007_F000_0000;
+    localparam logic [63:0] NVME_CARD_MEM_BASE = 64'h0000_0040_0000_0000;
+{% else %}
+    localparam logic [63:0] NVME_CARD_WIN_SIZE = 64'h0000_0003_F000_0000;
+    localparam logic [63:0] NVME_CARD_MEM_BASE = 64'h0000_0000_1000_0000;
 {% endif %}
 
     // TLB ram
@@ -440,6 +453,7 @@ package lynxTypes;
     localparam integer NSID_BITS = 4;
     localparam integer LBAF_BITS = 4;
     localparam integer REGION_ID_BITS = $clog2(N_REGIONS) > 0 ? $clog2(N_REGIONS) : 1;
+    localparam integer NVME_NUM_MEM_CHAN = {{ cnfg.nvme_num_mem_chan }};
 
     localparam integer N_CARD_AXI = {{ cnfg.n_card_axi }};
     localparam integer N_STRM_AXI = {{ cnfg.n_strm_axi }};

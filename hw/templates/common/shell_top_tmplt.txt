@@ -494,6 +494,31 @@ module shell_top (
     `AXI_ASSIGN_S2I(s_axi_debug_hub, s_axi_debug_hub)
     {% endif %}
 
+{% if cnfg.en_nvme_host and cnfg.en_nvme_card %}
+    // NVMe card window split
+    AXI4 s_axi_main_r ();
+    AXI4 axi_main_ctrl ();
+    AXI4 axi_nvme_card_ctrl ();
+
+    axi_reg_array #(.N_STAGES(1)) inst_main_reg (
+        .aclk(aclk),
+        .aresetn(aresetn),
+        .s_axi(s_axi_main),
+        .m_axi(s_axi_main_r)
+    );
+
+    nvme_card_split inst_nvme_card_split (
+        .aclk(aclk),
+        .aresetn(aresetn),
+        .s_axi(s_axi_main_r),
+        .m_axi_ctrl(axi_main_ctrl),
+        .m_axi_card(axi_nvme_card_mem)
+    );
+
+    // Unused
+    always_comb axi_nvme_card_ctrl.tie_off_s();
+
+{% endif %}
     shell_ctrl_cc inst_shell_ctrl_cc (
         .xclk(xclk),
         .xresetn(xresetn),
@@ -510,7 +535,11 @@ module shell_top (
         .axi_debug_hub(s_axi_debug_hub),
         {% endif %}
 
+{% if cnfg.en_nvme_host and cnfg.en_nvme_card %}
+        .axi_main(axi_main_ctrl),
+{% else %}
         .axi_main(s_axi_main),
+{% endif %}
         .axi_cnfg(axi_cnfg),
         .axi_ctrl(axi_ctrl),
 {% if cnfg.en_nvme_host %}
@@ -518,7 +547,7 @@ module shell_top (
         .axi_nvme_sq(axi_nvme_sq),
         .axi_nvme_cq(axi_nvme_cq),
     {% if cnfg.en_nvme_card %}
-        .axi_card_mem(axi_nvme_card_mem),
+        .axi_card_mem(axi_nvme_card_ctrl),
     {% endif %}
 {% endif %}
         .axim_ctrl(axim_ctrl) 
@@ -1355,10 +1384,24 @@ module shell_top (
     
     AXI4 #(.AXI4_DATA_BITS(AXI_DDR_BITS)) axi_mem [N_MEM_CHAN] ();
 
-{% if cnfg.en_nvme_card %}
+{% if cnfg.en_nvme_card and cnfg.nvme_num_mem_chan > 1 %}
+    // NVMe card memory channels
+    AXI4 #(.AXI4_DATA_BITS(AXI_DDR_BITS)) axi_nvme_mem [NVME_NUM_MEM_CHAN] ();
+
+    axi_stripe_nvme_multi #(.N_STAGES(N_REG_DYN_CARD_S0), .N_CHAN(NVME_NUM_MEM_CHAN)) inst_strp_nvme_card (
+        .aclk(aclk),
+        .aresetn(aresetn),
+        .s_axi(axi_nvme_card_mem),
+        .m_axi(axi_nvme_mem)
+    );
+
+{% for i in range(0, cnfg.nvme_num_mem_chan) %}
+    `AXI_ASSIGN(axi_nvme_mem[{{ i }}], axi_mem[N_MEM_CHAN-NVME_NUM_MEM_CHAN+{{ i }}])
+{% endfor %}
+{% elif cnfg.en_nvme_card %}
     // Keep the same HBM address mapping as Coyote's other memory paths while
     // using NVMe-safe AXI fragment and response bookkeeping.
-    axi_stripe_nvme inst_strp_nvme_card (
+    axi_stripe_nvme #(.N_STAGES(N_REG_DYN_CARD_S0)) inst_strp_nvme_card (
         .aclk(aclk),
         .aresetn(aresetn),
         .s_axi(axi_nvme_card_mem),

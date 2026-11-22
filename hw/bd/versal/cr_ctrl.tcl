@@ -172,6 +172,19 @@ proc cr_bd_design_ctrl { parentCell } {
     set_property -dict [list CONFIG.ADDR_WIDTH {64} CONFIG.DATA_WIDTH {128} CONFIG.PROTOCOL {AXI4} \
       CONFIG.HAS_BRESP {1} CONFIG.HAS_BURST {1} CONFIG.HAS_CACHE {1} CONFIG.HAS_LOCK {1} CONFIG.HAS_PROT {1} \
       CONFIG.HAS_RRESP {1} CONFIG.HAS_WSTRB {1} CONFIG.NUM_READ_OUTSTANDING {8} CONFIG.NUM_WRITE_OUTSTANDING {8} ] $axi_nvme_cq
+
+    if {$cnfg(en_nvme_card) eq 1} {
+      # NVMe card memory
+      set axi_card_mem [create_bd_intf_port -mode Master -vlnv xilinx.com:interface:aximm_rtl:1.0 axi_card_mem]
+      set_property -dict [list \
+        CONFIG.ADDR_WIDTH {64} \
+        CONFIG.DATA_WIDTH {512} \
+        CONFIG.PROTOCOL {AXI4} \
+        CONFIG.NUM_READ_OUTSTANDING {16} \
+        CONFIG.NUM_WRITE_OUTSTANDING {16} \
+        CONFIG.READ_WRITE_MODE {READ_WRITE} \
+      ] $axi_card_mem
+    }
   }
 
 ########################################################################################################
@@ -215,6 +228,9 @@ proc cr_bd_design_ctrl { parentCell } {
             }
             if {$cnfg(en_nvme_host) eq 1} {
                 append cmd ":axi_nvme_prp:axi_nvme_sq:axi_nvme_cq"
+                if {$cnfg(en_nvme_card) eq 1} {
+                    append cmd ":axi_card_mem"
+                }
             }
             append cmd "} \
               CONFIG.ASSOCIATED_RESET {aresetn} \
@@ -260,7 +276,7 @@ proc cr_bd_design_ctrl { parentCell } {
   # NVMe masters
   set nvme_mi_base $ic0_mi
   if {$cnfg(en_nvme_host) eq 1} {
-    set ic0_mi [expr {$ic0_mi + 3}]
+    set ic0_mi [expr {$ic0_mi + 3 + $cnfg(en_nvme_card)}]
   }
 
   # Use a single clock when all enabled clock domains share the same frequency as sclk
@@ -331,7 +347,11 @@ proc cr_bd_design_ctrl { parentCell } {
   }
 
   if {$cnfg(en_nvme_host) eq 1} {
-    foreach {nvme_off nvme_port} [list 0 axi_nvme_prp 1 axi_nvme_sq 2 axi_nvme_cq] {
+    set nvme_master_list [list 0 axi_nvme_prp 1 axi_nvme_sq 2 axi_nvme_cq]
+    if {$cnfg(en_nvme_card) eq 1} {
+      lappend nvme_master_list 3 axi_card_mem
+    }
+    foreach {nvme_off nvme_port} $nvme_master_list {
       set j [expr {$nvme_mi_base + $nvme_off}]
       set cmd [format "connect_bd_intf_net -intf_net axi_interconnect_0_M%02d_AXI \[get_bd_intf_pins axi_interconnect_0/M%02d_AXI] \[get_bd_intf_ports %s]" $j $j $nvme_port]
       eval $cmd
@@ -412,6 +432,17 @@ proc cr_bd_design_ctrl { parentCell } {
     create_bd_addr_seg -range 0x00040000 -offset 0x04040000 [get_bd_addr_spaces /axi_main] [get_bd_addr_segs axi_nvme_sq/Reg]   SEG_axi_nvme_sq_Reg
     create_bd_addr_seg -range 0x00010000 -offset 0x04020000 [get_bd_addr_spaces /axi_main] [get_bd_addr_segs axi_nvme_cq/Reg]   SEG_axi_nvme_cq_Reg
     create_bd_addr_seg -range 0x01000000 -offset 0x05000000 [get_bd_addr_spaces /axi_main] [get_bd_addr_segs axi_nvme_prp/Reg]  SEG_axi_nvme_prp_Reg
+
+    if {$cnfg(en_nvme_card) eq 1} {
+      # Card window
+      create_bd_addr_seg -range 0x10000000  -offset 0x10000000  [get_bd_addr_spaces /axi_main] [get_bd_addr_segs axi_card_mem/Reg] SEG_axi_card_mem_256M
+      create_bd_addr_seg -range 0x20000000  -offset 0x20000000  [get_bd_addr_spaces /axi_main] [get_bd_addr_segs axi_card_mem/Reg] SEG_axi_card_mem_512M
+      create_bd_addr_seg -range 0x40000000  -offset 0x40000000  [get_bd_addr_spaces /axi_main] [get_bd_addr_segs axi_card_mem/Reg] SEG_axi_card_mem_1G
+      create_bd_addr_seg -range 0x80000000  -offset 0x80000000  [get_bd_addr_spaces /axi_main] [get_bd_addr_segs axi_card_mem/Reg] SEG_axi_card_mem_2G
+      create_bd_addr_seg -range 0x100000000 -offset 0x100000000 [get_bd_addr_spaces /axi_main] [get_bd_addr_segs axi_card_mem/Reg] SEG_axi_card_mem_4G
+      create_bd_addr_seg -range 0x200000000 -offset 0x200000000 [get_bd_addr_spaces /axi_main] [get_bd_addr_segs axi_card_mem/Reg] SEG_axi_card_mem_8G
+      create_bd_addr_seg -range 0x400000000 -offset 0x400000000 [get_bd_addr_spaces /axi_main] [get_bd_addr_segs axi_card_mem/Reg] SEG_axi_card_mem_16G
+    }
   }
 
   if {$cnfg(en_pr) eq 0} {
