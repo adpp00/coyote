@@ -1212,6 +1212,9 @@ struct nvme_dev_ctx {
     /// Underlying PCI device claimed by the driver
     struct pci_dev *pdev;
 
+    /// Max_Read_Request_Size before open, restored on close
+    int             readrq;
+
     /// BAR0 (controller registers) ioremap; bar0_phys and bar0_size are kept for cleanup
     void __iomem   *bar0;
     uint64_t        bar0_phys;

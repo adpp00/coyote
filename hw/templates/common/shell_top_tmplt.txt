@@ -495,25 +495,44 @@ module shell_top (
     {% endif %}
 
 {% if cnfg.en_nvme_host and cnfg.en_nvme_card %}
-    // NVMe card window split
+    // NVMe card window split (axi_main is on xclk)
     AXI4 s_axi_main_r ();
     AXI4 axi_main_ctrl ();
     AXI4 axi_nvme_card_ctrl ();
+    {% if cnfg.fpga_arch == 'ultrascale_plus' %}
+    AXI4 axi_nvme_card_x ();
+    {% endif %}
 
     axi_reg_array #(.N_STAGES(1)) inst_main_reg (
-        .aclk(aclk),
-        .aresetn(aresetn),
+        .aclk(xclk),
+        .aresetn(xresetn),
         .s_axi(s_axi_main),
         .m_axi(s_axi_main_r)
     );
 
     nvme_card_split inst_nvme_card_split (
-        .aclk(aclk),
-        .aresetn(aresetn),
+        .aclk(xclk),
+        .aresetn(xresetn),
         .s_axi(s_axi_main_r),
         .m_axi_ctrl(axi_main_ctrl),
+    {% if cnfg.fpga_arch == 'ultrascale_plus' %}
+        .m_axi_card(axi_nvme_card_x)
+    );
+
+    // Card window to aclk
+    nvme_card_ccross inst_nvme_card_ccross (
+        .xclk(xclk),
+        .xresetn(xresetn),
+        .aclk(aclk),
+        .aresetn(aresetn),
+        .s_axi(axi_nvme_card_x),
+        .m_axi(axi_nvme_card_mem)
+    );
+    {% else %}
+        // aclk is xclk (cmake)
         .m_axi_card(axi_nvme_card_mem)
     );
+    {% endif %}
 
     // Unused
     always_comb axi_nvme_card_ctrl.tie_off_s();

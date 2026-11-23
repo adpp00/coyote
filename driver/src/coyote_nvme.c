@@ -337,8 +337,13 @@ static int nvme_open_pci(struct nvme_dev_ctx *ctx, const char *bdf) {
     /* Admin queue is polled, no INTx */
     pci_intx(pdev, 0);
     /* Read requests of at least 512 bytes */
-    if (pcie_get_readrq(pdev) < 512) {
+    ctx->readrq = pcie_get_readrq(pdev);
+    if (ctx->readrq < 512) {
         pcie_set_readrq(pdev, 512);
+        if (pcie_get_readrq(pdev) < 512) {
+            pr_warn("nvme_open_pci: %s keeps Max_Read_Request_Size %d bytes\n",
+                    bdf, pcie_get_readrq(pdev));
+        }
     }
 
     ret = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
@@ -390,6 +395,10 @@ static void nvme_close_pci(struct nvme_dev_ctx *ctx) {
         ctx->bar0 = NULL;
     }
     if (ctx->pdev) {
+        if (ctx->readrq) {
+            pcie_set_readrq(ctx->pdev, ctx->readrq);
+            ctx->readrq = 0;
+        }
         pci_clear_master(ctx->pdev);
         pci_release_mem_regions(ctx->pdev);
         pci_disable_device(ctx->pdev);
@@ -644,7 +653,17 @@ static int nvme_identify(struct nvme_dev_ctx *ctx, uint32_t nsid) {
     ctx->nsze = qwords[0];
     ctx->nsid = nsid;
 
+    /* FLBAS[6:5] extend the format index when there are more than 16 formats */
     flbas    = bytes[26] & 0xF;
+    if (bytes[25] >= 16) {
+        flbas |= ((bytes[26] >> 5) & 0x3) << 4;
+    }
+    if (flbas > bytes[25]) {
+        pr_err("identify ns: namespace %u uses LBA format %u of %u\n",
+               nsid, flbas, bytes[25] + 1);
+        ret = -EOPNOTSUPP;
+        goto out;
+    }
     lbaf_p   = (uint32_t *)(bytes + 128 + flbas * 4);
     lbads    = (*lbaf_p >> 16) & 0xFF;
     ctx->lba_size = 1U << lbads;

@@ -60,6 +60,13 @@ logic [PTR_BITS:0]          rd_cnt;
 logic                       rd_full, rd_empty, rd_head_card;
 logic                       ar_fire, r_done;
 
+// One ID at a time on the ctrl side, so its R come back in AR order
+logic [AXI_ID_BITS-1:0]     rd_ctrl_id;
+logic [PTR_BITS:0]          rd_ctrl_cnt;
+logic                       ar_ctrl_ok;
+
+assign ar_ctrl_ok = (rd_ctrl_cnt == 0) || (rd_ctrl_id == s_axi.arid);
+
 assign rd_full      = (rd_cnt == N_OUTSTANDING);
 assign rd_empty     = (rd_cnt == 0);
 assign rd_head_card = rd_card[rd_rd_ptr];
@@ -74,7 +81,7 @@ assign m_axi_ctrl.arprot   = s_axi.arprot;
 assign m_axi_ctrl.arqos    = s_axi.arqos;
 assign m_axi_ctrl.arregion = s_axi.arregion;
 assign m_axi_ctrl.arsize   = s_axi.arsize;
-assign m_axi_ctrl.arvalid  = s_axi.arvalid && !ar_card && !rd_full;
+assign m_axi_ctrl.arvalid  = s_axi.arvalid && !ar_card && !rd_full && ar_ctrl_ok;
 
 assign m_axi_card.araddr   = s_axi.araddr - NVME_CARD_WIN_BASE + NVME_CARD_MEM_BASE;
 assign m_axi_card.arburst  = s_axi.arburst;
@@ -88,7 +95,7 @@ assign m_axi_card.arregion = '0;
 assign m_axi_card.arsize   = s_axi.arsize;
 assign m_axi_card.arvalid  = s_axi.arvalid && ar_card && !rd_full;
 
-assign s_axi.arready = !rd_full && (ar_card ? m_axi_card.arready : m_axi_ctrl.arready);
+assign s_axi.arready = !rd_full && (ar_card ? m_axi_card.arready : (ar_ctrl_ok && m_axi_ctrl.arready));
 
 assign s_axi.rdata    = rd_head_card ? m_axi_card.rdata  : m_axi_ctrl.rdata;
 assign s_axi.rresp    = rd_head_card ? m_axi_card.rresp  : m_axi_ctrl.rresp;
@@ -116,6 +123,17 @@ always_ff @(posedge aclk) begin
         if (r_done)
             rd_rd_ptr <= rd_rd_ptr + 1'b1;
         rd_cnt <= rd_cnt + ar_fire - r_done;
+    end
+end
+
+always_ff @(posedge aclk) begin
+    if (!aresetn) begin
+        rd_ctrl_cnt <= '0;
+    end
+    else begin
+        if (ar_fire && !ar_card)
+            rd_ctrl_id <= s_axi.arid;
+        rd_ctrl_cnt <= rd_ctrl_cnt + (ar_fire && !ar_card) - (m_axi_ctrl.rvalid && m_axi_ctrl.rready && m_axi_ctrl.rlast);
     end
 end
 
@@ -160,6 +178,13 @@ logic [PTR_BITS:0]          b_cnt;
 logic                       aw_full, w_empty, b_empty, w_head_card, b_head_card;
 logic                       aw_fire, w_done, b_done;
 
+// One ID at a time on the ctrl side, so its B come back in AW order
+logic [AXI_ID_BITS-1:0]     wr_ctrl_id;
+logic [PTR_BITS:0]          wr_ctrl_cnt;
+logic                       aw_ctrl_ok;
+
+assign aw_ctrl_ok = (wr_ctrl_cnt == 0) || (wr_ctrl_id == s_axi.awid);
+
 assign aw_full     = (w_cnt == N_OUTSTANDING) || (b_cnt == N_OUTSTANDING);
 assign w_empty     = (w_cnt == 0);
 assign b_empty     = (b_cnt == 0);
@@ -176,7 +201,7 @@ assign m_axi_ctrl.awprot   = s_axi.awprot;
 assign m_axi_ctrl.awqos    = s_axi.awqos;
 assign m_axi_ctrl.awregion = s_axi.awregion;
 assign m_axi_ctrl.awsize   = s_axi.awsize;
-assign m_axi_ctrl.awvalid  = s_axi.awvalid && !aw_card && !aw_full;
+assign m_axi_ctrl.awvalid  = s_axi.awvalid && !aw_card && !aw_full && aw_ctrl_ok;
 
 assign m_axi_card.awaddr   = s_axi.awaddr - NVME_CARD_WIN_BASE + NVME_CARD_MEM_BASE;
 assign m_axi_card.awburst  = s_axi.awburst;
@@ -190,7 +215,7 @@ assign m_axi_card.awregion = '0;
 assign m_axi_card.awsize   = s_axi.awsize;
 assign m_axi_card.awvalid  = s_axi.awvalid && aw_card && !aw_full;
 
-assign s_axi.awready = !aw_full && (aw_card ? m_axi_card.awready : m_axi_ctrl.awready);
+assign s_axi.awready = !aw_full && (aw_card ? m_axi_card.awready : (aw_ctrl_ok && m_axi_ctrl.awready));
 
 assign m_axi_ctrl.wdata  = w_out.data;
 assign m_axi_ctrl.wstrb  = w_out.strb;
@@ -237,6 +262,17 @@ always_ff @(posedge aclk) begin
             b_rd_ptr <= b_rd_ptr + 1'b1;
         w_cnt <= w_cnt + aw_fire - w_done;
         b_cnt <= b_cnt + aw_fire - b_done;
+    end
+end
+
+always_ff @(posedge aclk) begin
+    if (!aresetn) begin
+        wr_ctrl_cnt <= '0;
+    end
+    else begin
+        if (aw_fire && !aw_card)
+            wr_ctrl_id <= s_axi.awid;
+        wr_ctrl_cnt <= wr_ctrl_cnt + (aw_fire && !aw_card) - (m_axi_ctrl.bvalid && m_axi_ctrl.bready);
     end
 end
 
