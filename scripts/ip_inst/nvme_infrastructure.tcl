@@ -62,3 +62,12 @@ set_property -dict [list CONFIG.DATA_WIDTH {512} CONFIG.SINGLE_PORT_BRAM {1} CON
 # CQ BRAM controller — 128-bit data, single port, AXI4
 create_ip -name axi_bram_ctrl -vendor xilinx.com -library ip -version 4.1 -module_name nvme_cq_axi_bram_ctrl
 set_property -dict [list CONFIG.DATA_WIDTH {128} CONFIG.SINGLE_PORT_BRAM {1} CONFIG.PROTOCOL {AXI4} CONFIG.MEM_DEPTH {4096} ] [get_ips nvme_cq_axi_bram_ctrl]
+
+# ============================================================================
+# Card window clock crossing (xclk to aclk, UltraScale+)
+# ============================================================================
+
+if {$cfg(en_nvme_host) eq 1 && $cfg(en_nvme_card) eq 1 && $cfg(fpga_arch) eq "ultrascale_plus"} {
+    create_ip -name axi_clock_converter -vendor xilinx.com -library ip -version 2.1 -module_name axi_clock_converter_nvme_card
+    set_property -dict [list CONFIG.ADDR_WIDTH {64} CONFIG.DATA_WIDTH {512} CONFIG.ID_WIDTH {6}] [get_ips axi_clock_converter_nvme_card]
+}
