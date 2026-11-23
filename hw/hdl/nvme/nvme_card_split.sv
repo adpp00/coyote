@@ -34,7 +34,8 @@ import lynxTypes::*;
  * Card window to m_axi_card, the rest to m_axi_ctrl.
  */
 module nvme_card_split #(
-    parameter integer N_OUTSTANDING = 64
+    parameter integer N_OUTSTANDING = 64,
+    parameter integer W_DEPTH = 32
 )(
     input  logic    aclk,
     input  logic    aresetn,
@@ -118,6 +119,32 @@ always_ff @(posedge aclk) begin
     end
 end
 
+// W queue
+typedef struct packed {
+    logic [AXI_DATA_BITS-1:0]   data;
+    logic [AXI_DATA_BITS/8-1:0] strb;
+    logic                       last;
+} w_beat_t;
+
+w_beat_t    w_in, w_out;
+logic       w_valid, w_ready;
+
+assign w_in = '{data: s_axi.wdata, strb: s_axi.wstrb, last: s_axi.wlast};
+
+axi_stripe_nvme_buf #(
+    .QTYPE(w_beat_t),
+    .QDEPTH(W_DEPTH)
+) inst_w_que (
+    .aclk(aclk),
+    .aresetn(aresetn),
+    .val_snk(s_axi.wvalid),
+    .rdy_snk(s_axi.wready),
+    .data_snk(w_in),
+    .val_src(w_valid),
+    .rdy_src(w_ready),
+    .data_src(w_out)
+);
+
 // AW / W / B
 logic aw_card;
 assign aw_card = (s_axi.awaddr >= NVME_CARD_WIN_BASE) && (s_axi.awaddr < CARD_END);
@@ -165,17 +192,17 @@ assign m_axi_card.awvalid  = s_axi.awvalid && aw_card && !aw_full;
 
 assign s_axi.awready = !aw_full && (aw_card ? m_axi_card.awready : m_axi_ctrl.awready);
 
-assign m_axi_ctrl.wdata  = s_axi.wdata;
-assign m_axi_ctrl.wstrb  = s_axi.wstrb;
-assign m_axi_ctrl.wlast  = s_axi.wlast;
-assign m_axi_ctrl.wvalid = s_axi.wvalid && !w_empty && !w_head_card;
+assign m_axi_ctrl.wdata  = w_out.data;
+assign m_axi_ctrl.wstrb  = w_out.strb;
+assign m_axi_ctrl.wlast  = w_out.last;
+assign m_axi_ctrl.wvalid = w_valid && !w_empty && !w_head_card;
 
-assign m_axi_card.wdata  = s_axi.wdata;
-assign m_axi_card.wstrb  = s_axi.wstrb;
-assign m_axi_card.wlast  = s_axi.wlast;
-assign m_axi_card.wvalid = s_axi.wvalid && !w_empty && w_head_card;
+assign m_axi_card.wdata  = w_out.data;
+assign m_axi_card.wstrb  = w_out.strb;
+assign m_axi_card.wlast  = w_out.last;
+assign m_axi_card.wvalid = w_valid && !w_empty && w_head_card;
 
-assign s_axi.wready = !w_empty && (w_head_card ? m_axi_card.wready : m_axi_ctrl.wready);
+assign w_ready = !w_empty && (w_head_card ? m_axi_card.wready : m_axi_ctrl.wready);
 
 assign s_axi.bresp    = b_head_card ? m_axi_card.bresp : m_axi_ctrl.bresp;
 assign s_axi.bid      = b_id[b_rd_ptr];
@@ -184,7 +211,7 @@ assign m_axi_ctrl.bready = !b_empty && !b_head_card && s_axi.bready;
 assign m_axi_card.bready = !b_empty &&  b_head_card && s_axi.bready;
 
 assign aw_fire = s_axi.awvalid && s_axi.awready;
-assign w_done  = s_axi.wvalid && s_axi.wready && s_axi.wlast;
+assign w_done  = w_valid && w_ready && w_out.last;
 assign b_done  = s_axi.bvalid && s_axi.bready;
 
 always_ff @(posedge aclk) begin
