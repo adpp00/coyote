@@ -51,7 +51,12 @@ module nvme_prp_builder #(
 
     input  logic [63:0] FPGA_BAR_BASE,
     input  logic [63:0] FPGA_PRP_BAR_BASE,
-    input  logic        CARD_WINDOW_EN
+    input  logic        CARD_WINDOW_EN,
+
+    // Card window page table writes
+    output logic                            m_card_tbl_valid,
+    output logic [NVME_CARD_TBL_BITS-1:0]   m_card_tbl_idx,
+    output logic [NVME_CARD_PAGE_BITS-1:0]  m_card_tbl_page
 );
 
     // PRP-list window: one 4-KiB page per CID and a fixed 1-MiB stride per
@@ -129,8 +134,7 @@ module nvme_prp_builder #(
 `ifdef EN_NVME_PL
         mmu_rsp_reachable = rsp.is_host || (NVME_CARD_FLOW != 0);
 `else
-        mmu_rsp_reachable = rsp.is_host || ((NVME_CARD_FLOW != 0) && CARD_WINDOW_EN &&
-            ({{(64-PADDR_BITS){1'b0}}, rsp.paddr} - NVME_CARD_MEM_BASE) < NVME_CARD_WIN_SIZE);
+        mmu_rsp_reachable = rsp.is_host || ((NVME_CARD_FLOW != 0) && CARD_WINDOW_EN);
 `endif
     endfunction
 
@@ -139,9 +143,36 @@ module nvme_prp_builder #(
     logic [63:0] card_bar_base;
 
     always_ff @(posedge aclk) begin
-        card_bar_base <= FPGA_BAR_BASE + NVME_CARD_WIN_BASE - NVME_CARD_MEM_BASE;
+        card_bar_base <= FPGA_BAR_BASE + NVME_CARD_WIN_BASE;
     end
 `endif
+
+    // Page of the command and window slot (device, CID)
+    logic [5:0]                                     pg_C, pg_N;
+    logic [NVME_CARD_DEV_BITS+NVME_QUEUE_BITS-1:0]  card_slot;
+
+    assign card_slot = {prp_req_C.dev_id[NVME_CARD_DEV_BITS-1:0], prp_req_C.sq_tail};
+
+    // Window address of a card page
+    function automatic logic [63:0] card_prp(
+        input logic [PADDR_BITS-1:0] paddr,
+        input logic [5:0]            pg
+    );
+`ifndef EN_NVME_PL
+        card_prp = card_bar_base + {{(52-NVME_CARD_TBL_BITS){1'b0}}, card_slot, pg, paddr[11:0]};
+`else
+        card_prp = '0;
+`endif
+    endfunction
+
+    // Page table write
+    logic                           tbl_valid_C, tbl_valid_N;
+    logic [NVME_CARD_TBL_BITS-1:0]  tbl_idx_C, tbl_idx_N;
+    logic [NVME_CARD_PAGE_BITS-1:0] tbl_page_C, tbl_page_N;
+
+    assign m_card_tbl_valid = tbl_valid_C;
+    assign m_card_tbl_idx   = tbl_idx_C;
+    assign m_card_tbl_page  = tbl_page_C;
 
     // State machine
     typedef enum logic [3:0] {
@@ -179,6 +210,10 @@ module nvme_prp_builder #(
         prp_rsp_N   = prp_rsp_C;
         prp_write_N = prp_write_C;
         mmu_rsp_N   = mmu_rsp_C;
+        pg_N        = pg_C;
+        tbl_valid_N = 1'b0;
+        tbl_idx_N   = tbl_idx_C;
+        tbl_page_N  = tbl_page_C;
 
         s_nvme_prp_req.ready       = 1'b0;
         m_nvme_mmu_req.valid       = 1'b0;
@@ -202,6 +237,7 @@ module nvme_prp_builder #(
                 if (s_nvme_prp_req.valid) begin
                     prp_req_N = s_nvme_prp_req.data;
                     prp_rsp_N = '0;
+                    pg_N      = '0;
                     state_N   = ST_SEND_MMU_PRP1;
                 end
             end
@@ -230,8 +266,16 @@ module nvme_prp_builder #(
                     // Translation fault → abort
                     if (s_nvme_mmu_rsp.data.fault || !mmu_rsp_reachable(s_nvme_mmu_rsp.data))
                         state_N = ST_FAULT;
-                    else
+                    else begin
+`ifndef EN_NVME_PL
+                        // Card page: the slot entry of this page in the page table
+                        tbl_valid_N = !s_nvme_mmu_rsp.data.is_host;
+                        tbl_idx_N   = {card_slot, pg_C};
+                        tbl_page_N  = s_nvme_mmu_rsp.data.paddr[PADDR_BITS-1:12];
+`endif
+                        pg_N = pg_C + 1'b1;
                         state_N = ST_CHECK_SIZE;
+                    end
                 end
             end
 
@@ -250,7 +294,7 @@ module nvme_prp_builder #(
                         mmu_rsp_C.paddr, mmu_rsp_C.is_host);
 `else
                 if (mmu_rsp_C.is_host == 1'b0)
-                    prp_rsp_N.prp1 = mmu_rsp_C.paddr + card_bar_base;
+                    prp_rsp_N.prp1 = card_prp(mmu_rsp_C.paddr, 6'd0);
                 else
                     prp_rsp_N.prp1 = mmu_rsp_C.paddr;
 `endif
@@ -304,6 +348,13 @@ module nvme_prp_builder #(
                     end
                     else if (s_nvme_mmu_rsp.data.last) begin
                         // Two pages
+`ifndef EN_NVME_PL
+                        // Card page: the slot entry of this page in the page table
+                        tbl_valid_N = !s_nvme_mmu_rsp.data.is_host;
+                        tbl_idx_N   = {card_slot, pg_C};
+                        tbl_page_N  = s_nvme_mmu_rsp.data.paddr[PADDR_BITS-1:12];
+`endif
+                        pg_N = pg_C + 1'b1;
                         prp_rsp_N = prp_rsp_C;
 `ifdef EN_NVME_PL
                         prp_rsp_N.prp2 = pl_encode_paddr(
@@ -311,7 +362,7 @@ module nvme_prp_builder #(
                             s_nvme_mmu_rsp.data.is_host);
 `else
                         if (s_nvme_mmu_rsp.data.is_host == 1'b0)
-                            prp_rsp_N.prp2 = s_nvme_mmu_rsp.data.paddr + card_bar_base;
+                            prp_rsp_N.prp2 = card_prp(s_nvme_mmu_rsp.data.paddr, pg_C);
                         else
                             prp_rsp_N.prp2 = s_nvme_mmu_rsp.data.paddr;
 `endif
@@ -319,6 +370,13 @@ module nvme_prp_builder #(
                     end
                     else begin
                         // More pages: PRP list
+`ifndef EN_NVME_PL
+                        // Card page: the slot entry of this page in the page table
+                        tbl_valid_N = !s_nvme_mmu_rsp.data.is_host;
+                        tbl_idx_N   = {card_slot, pg_C};
+                        tbl_page_N  = s_nvme_mmu_rsp.data.paddr[PADDR_BITS-1:12];
+`endif
+                        pg_N = pg_C + 1'b1;
                         prp_rsp_N = prp_rsp_C;
 `ifdef EN_NVME_PL
                         // Disjoint fields: 16-MiB aligned base, device in
@@ -346,7 +404,7 @@ module nvme_prp_builder #(
                             s_nvme_mmu_rsp.data.is_host);
 `else
                         if (s_nvme_mmu_rsp.data.is_host == 1'b0)
-                            prp_write_N.data = s_nvme_mmu_rsp.data.paddr + card_bar_base;
+                            prp_write_N.data = card_prp(s_nvme_mmu_rsp.data.paddr, pg_C);
                         else
                             prp_write_N.data = s_nvme_mmu_rsp.data.paddr;
 `endif
@@ -405,6 +463,13 @@ module nvme_prp_builder #(
                         state_N = ST_FAULT;
                     end
                     else begin
+`ifndef EN_NVME_PL
+                        // Card page: the slot entry of this page in the page table
+                        tbl_valid_N = !s_nvme_mmu_rsp.data.is_host;
+                        tbl_idx_N   = {card_slot, pg_C};
+                        tbl_page_N  = s_nvme_mmu_rsp.data.paddr[PADDR_BITS-1:12];
+`endif
+                        pg_N = pg_C + 1'b1;
                         // Prepare write data
                         prp_write_N = prp_write_C;
 `ifdef EN_NVME_PL
@@ -413,7 +478,7 @@ module nvme_prp_builder #(
                             s_nvme_mmu_rsp.data.is_host);
 `else
                         if (s_nvme_mmu_rsp.data.is_host == 1'b0)
-                            prp_write_N.data = s_nvme_mmu_rsp.data.paddr + card_bar_base;
+                            prp_write_N.data = card_prp(s_nvme_mmu_rsp.data.paddr, pg_C);
                         else
                             prp_write_N.data = s_nvme_mmu_rsp.data.paddr;
 `endif
@@ -474,6 +539,10 @@ module nvme_prp_builder #(
             prp_rsp_C   <= '0;
             prp_write_C <= '0;
             mmu_rsp_C   <= '0;
+            pg_C        <= '0;
+            tbl_valid_C <= 1'b0;
+            tbl_idx_C   <= '0;
+            tbl_page_C  <= '0;
         end
         else begin
             state_C     <= state_N;
@@ -481,6 +550,10 @@ module nvme_prp_builder #(
             prp_rsp_C   <= prp_rsp_N;
             prp_write_C <= prp_write_N;
             mmu_rsp_C   <= mmu_rsp_N;
+            pg_C        <= pg_N;
+            tbl_valid_C <= tbl_valid_N;
+            tbl_idx_C   <= tbl_idx_N;
+            tbl_page_C  <= tbl_page_N;
         end
     end
 

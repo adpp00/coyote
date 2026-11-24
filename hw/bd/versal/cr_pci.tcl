@@ -378,14 +378,14 @@ proc cr_bd_design_static { parentCell } {
     exit 1
   }
 
-  # BAR4 with NVMe card memory
+  # BAR4 with NVMe card memory (256 MB: card memory is reached through the card window)
   set nvme_pl_axi [expr {$cnfg(en_nvme_host) eq 1 && $cnfg(en_nvme_card) eq 1 && $cnfg(pcie_gen) eq 5}]
   if {$cnfg(en_nvme_host) eq 1 && $cnfg(en_nvme_card) eq 1} {
     set cpm_pcie [expr {$cnfg(pcie_gen) eq 5 ? "CPM_PCIE1" : "CPM_PCIE0"}]
     set_property CONFIG.CPM_CONFIG [dict merge [get_property CONFIG.CPM_CONFIG $versal_cips_0] \
-      [list ${cpm_pcie}_PF0_BAR4_QDMA_SCALE Gigabytes ${cpm_pcie}_PF0_BAR4_QDMA_SIZE 32 ${cpm_pcie}_PF0_BAR4_QDMA_AXCACHE 1]] $versal_cips_0
-    set main_range 32G
-    set main_aperture 32G
+      [list ${cpm_pcie}_PF0_BAR4_QDMA_AXCACHE 1]] $versal_cips_0
+    set main_range 256M
+    set main_aperture 1G
     set main_bw 6400
     set main_burst 64
     if {$nvme_pl_axi} {

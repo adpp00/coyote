@@ -103,6 +103,12 @@ module design_dynamic_top #(
     AXI4.s                                      s_axi_nvme_prp,
     AXI4.s                                      s_axi_nvme_sq,
     AXI4.s                                      s_axi_nvme_cq,
+{% if cnfg.en_nvme_host and cnfg.en_nvme_card %}
+    // NVMe card window page table writes
+    output logic                                m_nvme_card_tbl_valid,
+    output logic [NVME_CARD_TBL_BITS-1:0]       m_nvme_card_tbl_idx,
+    output logic [NVME_CARD_PAGE_BITS-1:0]      m_nvme_card_tbl_page,
+{% endif %}
 {% if cnfg.en_nvme_pl %}
     // PL-connected NVMe doorbell MMIO path and pipelined discovery result.
     AXI4.m                                      m_axi_nvme_mmio,
@@ -1235,6 +1241,11 @@ module design_dynamic_top #(
 {% if cnfg.en_nvme_host %}
         .m_db_wr_req(nvme_db_wr_req),
         .m_db_wr_data(nvme_db_wr_data),
+{% if cnfg.en_nvme_card %}
+        .m_card_tbl_valid(m_nvme_card_tbl_valid),
+        .m_card_tbl_idx(m_nvme_card_tbl_idx),
+        .m_card_tbl_page(m_nvme_card_tbl_page),
+{% endif %}
 {% elif cnfg.en_nvme_pl %}
         .m_axi_nvme_mmio(m_axi_nvme_mmio),
         .nvme_pl_ready(nvme_pl_ready),

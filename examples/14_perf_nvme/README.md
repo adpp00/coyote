@@ -80,7 +80,7 @@ Non-throwing query used to discover whether a given `(BDF, NSID)` pair is alread
   ```
 - Use a scratch SSD: the write benchmark overwrites the reserved LBA range, which starts at LBA 0 of the namespace for the first claim.
 - Host-attached SSDs exchange data with the FPGA by PCIe peer-to-peer, so the IOMMU must be off or in passthrough mode.
-- Buffers in HBM (`--fpga-mem`) need a shell whose static layer is rebuilt with `-DBUILD_STATIC=1 -DBUILD_SHELL=0`; with the shipped static layer, every command fails with local error 3. A PL-attached SSD (V80) always needs this static layer.
+- Buffers in HBM (`--fpga-mem`) work with the shipped static layer on the U55C/U280. On the V80 they need a static layer rebuilt with `-DBUILD_STATIC=1 -DBUILD_SHELL=0`, as a PL-attached SSD does.
 - On the V80, a buffer has to fit in one card memory block, so `--total` must be smaller than 256 MB.
 
 ### Command line parameters

@@ -31,7 +31,7 @@ import lynxTypes::*;
 /**
  * @brief   NVMe card window split of axi_main
  *
- * Card window to m_axi_card, the rest to m_axi_ctrl.
+ * Card window to m_axi_card (as window offsets), the rest to m_axi_ctrl.
  */
 module nvme_card_split #(
     parameter integer N_OUTSTANDING = 64,
@@ -83,7 +83,7 @@ assign m_axi_ctrl.arregion = s_axi.arregion;
 assign m_axi_ctrl.arsize   = s_axi.arsize;
 assign m_axi_ctrl.arvalid  = s_axi.arvalid && !ar_card && !rd_full && ar_ctrl_ok;
 
-assign m_axi_card.araddr   = s_axi.araddr - NVME_CARD_WIN_BASE + NVME_CARD_MEM_BASE;
+assign m_axi_card.araddr   = s_axi.araddr - NVME_CARD_WIN_BASE;
 assign m_axi_card.arburst  = s_axi.arburst;
 assign m_axi_card.arcache  = s_axi.arcache;
 assign m_axi_card.arid     = '0;
@@ -203,7 +203,7 @@ assign m_axi_ctrl.awregion = s_axi.awregion;
 assign m_axi_ctrl.awsize   = s_axi.awsize;
 assign m_axi_ctrl.awvalid  = s_axi.awvalid && !aw_card && !aw_full && aw_ctrl_ok;
 
-assign m_axi_card.awaddr   = s_axi.awaddr - NVME_CARD_WIN_BASE + NVME_CARD_MEM_BASE;
+assign m_axi_card.awaddr   = s_axi.awaddr - NVME_CARD_WIN_BASE;
 assign m_axi_card.awburst  = s_axi.awburst;
 assign m_axi_card.awcache  = s_axi.awcache;
 assign m_axi_card.awid     = '0;

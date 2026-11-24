@@ -499,9 +499,13 @@ module shell_top (
     AXI4 s_axi_main_r ();
     AXI4 axi_main_ctrl ();
     AXI4 axi_nvme_card_ctrl ();
+    AXI4 axi_nvme_card_win ();
     {% if cnfg.fpga_arch == 'ultrascale_plus' %}
     AXI4 axi_nvme_card_x ();
     {% endif %}
+    logic                           nvme_card_tbl_valid;
+    logic [NVME_CARD_TBL_BITS-1:0]  nvme_card_tbl_idx;
+    logic [NVME_CARD_PAGE_BITS-1:0] nvme_card_tbl_page;
 
     axi_reg_array #(.N_STAGES(1)) inst_main_reg (
         .aclk(xclk),
@@ -526,13 +530,24 @@ module shell_top (
         .aclk(aclk),
         .aresetn(aresetn),
         .s_axi(axi_nvme_card_x),
-        .m_axi(axi_nvme_card_mem)
+        .m_axi(axi_nvme_card_win)
     );
     {% else %}
         // aclk is xclk (cmake)
-        .m_axi_card(axi_nvme_card_mem)
+        .m_axi_card(axi_nvme_card_win)
     );
     {% endif %}
+
+    // Card window to card memory
+    nvme_card_xlat inst_nvme_card_xlat (
+        .aclk(aclk),
+        .aresetn(aresetn),
+        .tbl_valid(nvme_card_tbl_valid),
+        .tbl_idx(nvme_card_tbl_idx),
+        .tbl_page(nvme_card_tbl_page),
+        .s_axi(axi_nvme_card_win),
+        .m_axi(axi_nvme_card_mem)
+    );
 
     // Unused
     always_comb axi_nvme_card_ctrl.tie_off_s();
@@ -2085,6 +2100,11 @@ module shell_top (
         .s_axi_nvme_prp(axi_nvme_prp),
         .s_axi_nvme_sq(axi_nvme_sq),
         .s_axi_nvme_cq(axi_nvme_cq),
+{% endif %}
+{% if cnfg.en_nvme_host and cnfg.en_nvme_card %}
+        .m_nvme_card_tbl_valid(nvme_card_tbl_valid),
+        .m_nvme_card_tbl_idx(nvme_card_tbl_idx),
+        .m_nvme_card_tbl_page(nvme_card_tbl_page),
 {% endif %}
 {% if cnfg.en_nvme_pl %}
         .m_axi_nvme_mmio(axi_nvme_mmio),

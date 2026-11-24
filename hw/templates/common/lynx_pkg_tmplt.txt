@@ -172,23 +172,16 @@ package lynxTypes;
     localparam integer AXI_DDR_BITS = 512;
     localparam integer AXI_TLB_BITS = 128;
     localparam integer AXI_ID_BITS = 6;
-{% if cnfg.en_nvme_host and cnfg.en_nvme_card and cnfg.fpga_arch == 'versal' %}
-    // 32 GB BAR4 (NVMe card memory)
-    localparam integer AXI_BPSS_BAR_BITS = 35;
-{% elif cnfg.en_nvme_host and cnfg.en_nvme_card %}
-    // 16 GB bypass BAR (NVMe card memory)
-    localparam integer AXI_BPSS_BAR_BITS = 34;
-{% else %}
     localparam integer AXI_BPSS_BAR_BITS = 28;
-{% endif %}
 
-    // NVMe card window (MEM_START in coyote_defs.h)
-    localparam logic [63:0] NVME_CARD_WIN_BASE = 64'h0000_0000_1000_0000;
+    // NVMe card window in the upper half of the 256 MB shell BAR, mapped to card memory page by page
+    localparam logic [63:0] NVME_CARD_WIN_BASE = 64'h0000_0000_0800_0000;
+    localparam logic [63:0] NVME_CARD_WIN_SIZE = 64'h0000_0000_0800_0000;
+
+    // NVMe card memory base (MEM_START in coyote_defs.h)
 {% if cnfg.fpga_arch == 'versal' %}
-    localparam logic [63:0] NVME_CARD_WIN_SIZE = 64'h0000_0007_F000_0000;
     localparam logic [63:0] NVME_CARD_MEM_BASE = 64'h0000_0040_0000_0000;
 {% else %}
-    localparam logic [63:0] NVME_CARD_WIN_SIZE = 64'h0000_0003_F000_0000;
     localparam logic [63:0] NVME_CARD_MEM_BASE = 64'h0000_0000_1000_0000;
 {% endif %}
 
@@ -444,6 +437,10 @@ package lynxTypes;
     // Queue geometry is shared by shell, applications, setup engine, and driver.
     localparam integer NVME_QUEUE_DEPTH = {{ cnfg.nvme_queue_depth }};
     localparam integer NVME_QUEUE_BITS = $clog2(NVME_QUEUE_DEPTH);
+    // NVMe card window: a 256 KB slot of 64 pages per device and CID
+    localparam integer NVME_CARD_DEV_BITS = (NVME_NUM_DEVICES > 1) ? $clog2(NVME_NUM_DEVICES) : 1;
+    localparam integer NVME_CARD_TBL_BITS = NVME_CARD_DEV_BITS + NVME_QUEUE_BITS + 6;
+    localparam integer NVME_CARD_PAGE_BITS = PADDR_BITS - 12;
     // Assignment response {device[15:12], CID[11:4], error[3:0]} at every depth.
     // CIDs are 8 bits in the response and in nvme_cqe_t; CIDs of shallower
     // queues are zero-extended.

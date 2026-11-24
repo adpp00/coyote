@@ -53,6 +53,11 @@ module nvme_top (
     // Host-connected NVMe: doorbell DMA write (merged upstream via arbiter)
     dmaIntf.m           m_db_wr_req,
     AXI4S.m             m_db_wr_data,
+
+    // Card window page table writes
+    output logic                            m_card_tbl_valid,
+    output logic [NVME_CARD_TBL_BITS-1:0]   m_card_tbl_idx,
+    output logic [NVME_CARD_PAGE_BITS-1:0]  m_card_tbl_page,
 `elsif EN_NVME_PL
     // PL-connected NVMe: doorbell AXI-MM path to design_plnvme
     AXI4.m              m_axi_nvme_mmio,
@@ -424,7 +429,16 @@ module nvme_top (
         .m_nvme_prp_write_req (prp_write_strm),
         .FPGA_BAR_BASE        (fpga_bar_base),
         .FPGA_PRP_BAR_BASE    (fpga_prp_bar_base),
-        .CARD_WINDOW_EN       (card_window_en)
+        .CARD_WINDOW_EN       (card_window_en),
+`ifdef EN_NVME_HOST
+        .m_card_tbl_valid     (m_card_tbl_valid),
+        .m_card_tbl_idx       (m_card_tbl_idx),
+        .m_card_tbl_page      (m_card_tbl_page)
+`else
+        .m_card_tbl_valid     (),
+        .m_card_tbl_idx       (),
+        .m_card_tbl_page      ()
+`endif
     );
 
     // Stage 2: Combine cmd_dispatched + prp_rsp → SQE + doorbell

@@ -395,13 +395,8 @@ create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 proc_sys_reset_u
     create_bd_addr_seg -range 0x01000000 -offset 0x05000000 [get_bd_addr_spaces /axi_main] [get_bd_addr_segs axi_nvme_prp/Reg]  SEG_axi_nvme_prp_Reg
 
     if {$cnfg(en_nvme_card) eq 1} {
-      # axi_card_mem: 256MB..16GB in power-of-two aligned segments
-      create_bd_addr_seg -range 0x10000000  -offset 0x10000000  [get_bd_addr_spaces /axi_main] [get_bd_addr_segs axi_card_mem/Reg] SEG_axi_card_mem_256M
-      create_bd_addr_seg -range 0x20000000  -offset 0x20000000  [get_bd_addr_spaces /axi_main] [get_bd_addr_segs axi_card_mem/Reg] SEG_axi_card_mem_512M
-      create_bd_addr_seg -range 0x40000000  -offset 0x40000000  [get_bd_addr_spaces /axi_main] [get_bd_addr_segs axi_card_mem/Reg] SEG_axi_card_mem_1G
-      create_bd_addr_seg -range 0x80000000  -offset 0x80000000  [get_bd_addr_spaces /axi_main] [get_bd_addr_segs axi_card_mem/Reg] SEG_axi_card_mem_2G
-      create_bd_addr_seg -range 0x100000000 -offset 0x100000000 [get_bd_addr_spaces /axi_main] [get_bd_addr_segs axi_card_mem/Reg] SEG_axi_card_mem_4G
-      create_bd_addr_seg -range 0x200000000 -offset 0x200000000 [get_bd_addr_spaces /axi_main] [get_bd_addr_segs axi_card_mem/Reg] SEG_axi_card_mem_8G
+      # Card window (translated to card memory in the shell)
+      create_bd_addr_seg -range 0x08000000  -offset 0x08000000  [get_bd_addr_spaces /axi_main] [get_bd_addr_segs axi_card_mem/Reg] SEG_axi_card_mem_win
     }
   }
 

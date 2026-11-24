@@ -73,11 +73,7 @@
 #define NVME_SQ_SIZE        0x4000UL
 #define NVME_CQ_BASE        0x04020000UL    /* CQ BRAM, 4 KB per device */
 #define NVME_CQ_SIZE        0x1000UL
-#ifdef PLATFORM_VERSAL
-#define NVME_CARD_WIN_END   0x800000000ULL  /* End of the card memory window, 32 GB BAR */
-#else
-#define NVME_CARD_WIN_END   0x400000000ULL  /* End of the card memory window, 16 GB BAR */
-#endif
+#define NVME_CARD_WIN_END   0x10000000UL    /* End of the card memory window (upper 128 MB of the 256 MB BAR) */
 
 /* Highest NSID the FPGA can address (4-bit nsid) */
 #define NVME_MAX_NSID           15
